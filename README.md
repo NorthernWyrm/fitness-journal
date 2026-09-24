@@ -2,25 +2,68 @@
 
 A self-hosted Google Apps Script workout journal backed by your own Google Sheet. Log exercises from a web app, restore unfinished sessions, reuse templates, and review training history through a dashboard and weekly email digest.
 
-Features include per-set reps and loads, load PRs, best reps at the maximum recorded load, and longest isometric holds at the maximum recorded load.
+## Major capabilities
+
+- Log straight sets or individual sets with different reps and loads.
+- Restore unfinished sessions and reuse workout templates.
+- Track load PRs and the most reps at your maximum-ever load, including longest isometric holds at that load.
+- Review volume, exercise progress, muscle-group gaps, and workout density in Google Sheets.
+- Receive an optional weekly training digest by email.
+- Open your journal from a shortcut on your phone's Home Screen.
+
+## Documentation
+
+- [Setup guide](SETUP.md): deployment, permissions, mobile shortcuts, troubleshooting, and updates.
+- [Analytics guide](ANALYTICS.md): dashboard and digest contents, calculations, and limitations.
+
+## Who is this for?
+
+This Fitness Journal app is my own attempt to streamline logging my workouts and gathering actionable information from those logs. "You can't improve what you don't measure". It started as clear, easy alternative to using my phone's Notes app and spending time interpreting and copying that information into an Excel sheet. In my personal opinion, it's led to me being more involved in my workouts, and enjoying the process more. The information I've gathered is very valuable, and just being able to visualize my progress and discipline in graphs and charts is a huge motivation boon. Hope this serves you as well as it has me
+
+Deploying and setting up this app is definitely more involved technically than using a paid app, but what you get in return is:
+
+- **Freedom**: The app and the code are yours, forever.
+- **More Privacy**: Inasmuch as a Google Sheet is private information.
+- **Access**: As long as Google Apps Script works, you'll be able to use your app.
+
+## Quick installation
+
+1. Create a Google Sheet with a worksheet named **StrengthWorkoutINPUT**. Add these headers in columns A-G: `Date`, `Exercise`, `Sets`, `Reps`, `Load`, `Focus`, `Notes`.
+2. Open **Extensions > Apps Script**. Replace `Code.gs` with this repository's code and create an HTML file named **Index** containing `Index.html`.
+3. Save the project and match its time zone to the spreadsheet's time zone.
+4. Choose **Deploy > New deployment > Web app**, execute as **Me**, and restrict access to **Only myself**. Complete authorization.
+5. Open the deployed `/exec` URL using the same Google account.
+
+For the full walkthrough and phone shortcuts, see [SETUP.md](SETUP.md). This is a single-user journal: each installation should have its own spreadsheet and script project. No API keys are required.
+
+## Basic usage
+
+1. Set the workout date; it defaults to today, but you can change it for past workouts.
+2. Fill in at least one exercise card. Use **Add Exercise** for additional exercises.
+3. For varying sets, choose **Enter sets individually**. Use **Back to single entry** to return.
+4. To reuse the workout, choose **Save Current Exercises as Template** before saving the session. Load a saved template to prefill its exercises later.
+5. Press **Save Session** and wait for confirmation. The app announces new records and clears the cards for your next session.
+
+Each card has these fields:
+
+- **Exercise:** The exercise name.
+- **Sets:** Number of sets.
+- **Reps:** Reps per set, or hold duration in seconds for isometrics.
+- **Load:** Weight in kilograms.
+- **Focus:** Targeted muscle group.
+- **Notes:** Additional information.
+
+Use a name containing `iso` for an isometric exercise. Exercise names are suggested from saved history, and an empty Focus field can be filled from that exercise's most common focus. Sets, reps, and load are prefilled by templates, not automatically restored from history.
+
+The app shows muscle-group training gaps and live PR hints. Rep or hold records appear when your entered load meets or exceeds your saved load PR. See [PR definitions](ANALYTICS.md#personal-records) for details.
+
+Open the spreadsheet's **Dashboard** tab for charts. After manual spreadsheet edits, choose **Fitness Journal > Rebuild Dashboard**. Enable the optional weekly email using the [digest setup instructions](SETUP.md#weekly-digest-setup).
 
 ## Files
 
-- `Code.gs`: Apps Script backend, spreadsheet storage, dashboard, and digest.
-- `Index.html`: Web app interface.
-- `tests/pr-records.test.js`: Local regression tests for PR calculations and hints.
-
-## Setup
-
-1. Create or open a Google Sheet and add a tab named `StrengthWorkoutINPUT`.
-2. Add these headers in columns A–G: `Date`, `Exercise`, `Sets`, `Reps`, `Load`, `Focus`, `Notes`.
-3. Open **Extensions > Apps Script**, copy `Code.gs` into the script project, and add an HTML file named `Index` containing `Index.html`.
-4. Review the configuration at the top of `Code.gs`, including historical import sheet names and the optional digest recipient. Set the script time zone to match the spreadsheet.
-5. Deploy the script as a web app that executes as you, restrict access to yourself, and authorize the required Google services. This is a single-user journal: drafts, templates, and workout history are shared within one spreadsheet.
-
-The app creates supporting tabs as needed. Reopen the spreadsheet to access the **Fitness Journal** menu for dashboard rebuilds, historical imports, exercise name merging, and optional weekly digest setup.
-
-For isometric exercises, use a name containing `iso` and enter hold duration in seconds in the Reps/Hold field. PRs are derived from the existing workout rows; no separate record migration is required.
+- [Code.gs](Code.gs): Apps Script backend, spreadsheet storage, dashboard, and digest.
+- [Index.html](Index.html): Web app interface.
+- [tests/pr-records.test.js](tests/pr-records.test.js): Local regression tests for PR calculations and hints.
 
 ## Tests
 
@@ -32,14 +75,6 @@ node --test tests/pr-records.test.js
 
 Tests use mocked spreadsheet services. Live Apps Script deployment and Google service integration require separate verification.
 
-## Deployment updates
+## Updates
 
-This repository stores the source code. Pushing to GitHub does not automatically update the Apps Script deployment; copy changes to the script project and update its deployment separately.
-
-## Configuration and data
-
-No API keys are required. Apps Script uses Google authorization to access the bound spreadsheet and send the optional digest. Workout data stays in the spreadsheet; this repository contains source code and synthetic test fixtures only.
-
-Historical imports are disabled by default (`IMPORT_SOURCE_SHEETS = []`). Add your own source tab names locally if needed. The optional digest recipient defaults to the user running the script; configure an override only in your own Apps Script project.
-
-Keep spreadsheet exports, deployment identifiers, email addresses, and credentials out of public commits. Each installation should use its own spreadsheet and Apps Script project.
+All updates will be committed to the repo, and will have to be deployed manually to your own Google Sheet and Apps Script. The core functionality is unlikely to change in the near future. Follow [Updating your deployment](SETUP.md#deployment-updates) to keep your existing phone shortcut working.
