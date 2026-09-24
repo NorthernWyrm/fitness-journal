@@ -1,0 +1,1213 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    * { box-sizing: border-box; }
+    html {
+      overscroll-behavior: none; /* stops the browser's pull-to-refresh gesture */
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f4f4f5;
+      margin: 0;
+      padding: 16px 16px 100px 16px; /* extra bottom buffer so overscroll at the end is less likely */
+      color: #18181b;
+      overscroll-behavior: none;
+    }
+    h1 {
+      font-size: 20px;
+      margin: 0 0 16px;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: #52525b;
+      margin-bottom: 4px;
+      margin-top: 10px;
+    }
+    input, textarea, select {
+      width: 100%;
+      padding: 10px;
+      font-size: 16px; /* prevents iOS zoom-in on focus */
+      border: 1px solid #d4d4d8;
+      border-radius: 8px;
+      background: white;
+    }
+    textarea { resize: vertical; min-height: 40px; }
+    select { appearance: none; -webkit-appearance: none; }
+
+    .top-card {
+      background: white;
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 16px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+    }
+
+    .exercise-card {
+      background: white;
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+      position: relative;
+    }
+    .exercise-card .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .exercise-card .header span {
+      font-weight: 700;
+      font-size: 14px;
+      color: #71717a;
+    }
+    .remove-btn {
+      background: none;
+      border: none;
+      color: #ef4444;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 4px 8px;
+      cursor: pointer;
+    }
+    .row-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .add-btn {
+      width: 100%;
+      padding: 12px;
+      border: 2px dashed #a1a1aa;
+      background: transparent;
+      border-radius: 10px;
+      color: #52525b;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-bottom: 20px;
+    }
+    .add-btn:active { background: #e4e4e7; }
+
+    .submit-btn {
+      width: 100%;
+      padding: 14px;
+      border: none;
+      background: #18181b;
+      color: white;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .submit-btn:disabled { background: #a1a1aa; }
+
+    #status {
+      text-align: center;
+      margin-top: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      min-height: 20px;
+      white-space: pre-line;
+    }
+    #status.success { color: #16a34a; }
+    #status.error { color: #ef4444; }
+  </style>
+</head>
+<body>
+  <h1>Fitness Journal</h1>
+
+  <div class="top-card" id="focus-gaps-card">
+    <label>Muscle Group Gaps</label>
+    <div id="focus-gaps-list" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;">
+      <span style="font-size:12px;color:#a1a1aa;">Loading...</span>
+    </div>
+  </div>
+
+  <div class="top-card">
+    <label for="date">Date</label>
+    <input type="date" id="date">
+
+    <label for="template-select">Load Template (optional)</label>
+    <select id="template-select">
+      <option value="">-- Select a template --</option>
+    </select>
+  </div>
+
+  <div id="exercise-list"></div>
+
+  <button class="add-btn" id="add-exercise-btn">+ Add Exercise</button>
+  <button class="add-btn" id="save-template-btn" style="border-color:#2563eb;color:#2563eb;">Save Current Exercises as Template</button>
+
+  <button class="submit-btn" id="submit-btn">Save Session</button>
+  <div id="status"></div>
+
+  <datalist id="exercise-datalist"></datalist>
+
+  <style>
+    .suggestion-chip {
+      display: none;
+      margin-top: 4px;
+      font-size: 12px;
+      color: #2563eb;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .pr-hint {
+      display: none;
+      margin-top: 4px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .pr-hint.neutral { color: #71717a; font-weight: 500; }
+    .pr-hint.new { color: #2563eb; }
+    .pr-hint.pr { color: #16a34a; }
+
+    .est1rm-hint {
+      display: none;
+      margin-top: 4px;
+      font-size: 11px;
+      color: #71717a;
+      font-weight: 500;
+      white-space: pre-line;
+      line-height: 1.5;
+    }
+
+    .toggle-per-set { margin-top: 8px; }
+    .toggle-per-set a {
+      font-size: 12px;
+      color: #2563eb;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .per-set-container { display: none; margin-top: 8px; }
+    .set-row {
+      display: grid;
+      grid-template-columns: 40px 1fr 1fr 28px;
+      gap: 6px;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    .set-row .set-label { font-size: 12px; color: #71717a; font-weight: 600; }
+    .set-row input { padding: 8px; font-size: 15px; }
+    .set-remove-btn {
+      background: none;
+      border: none;
+      color: #ef4444;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      padding: 0;
+    }
+    .add-set-btn {
+      width: 100%;
+      padding: 8px;
+      border: 1px dashed #a1a1aa;
+      background: transparent;
+      border-radius: 8px;
+      color: #52525b;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 2px;
+    }
+    .per-set-preview {
+      font-size: 11px;
+      color: #71717a;
+      margin-top: 6px;
+      font-style: italic;
+    }
+  </style>
+
+  <script>
+    var exerciseCount = 0;
+    var exerciseOptions = [];
+    var prRecordsByExercise = {};
+    var maxEst1RMByExercise = {};
+
+    // Captures when this session began, for Workout Density. Persisted through
+    // drafts so a reload mid-session doesn't reset the clock and understate
+    // how long the session actually took.
+    var sessionStartTime = new Date();
+
+    // Fixed muscle-group categories — matches the reporting groups used on
+    // the Dashboard/digest, keeps future logging from re-fragmenting the data.
+    var FOCUS_GROUPS = ['Back', 'Legs', 'Glutes', 'Chest', 'Biceps', 'Triceps', 'Core', 'Forearms'];
+
+    // Autosave protects against accidental reloads (scroll/pull-to-refresh,
+    // the browser tab sleeping and reloading, etc.). Stored server-side in a
+    // hidden sheet tab rather than localStorage — iOS WebKit browsers (Safari,
+    // Brave iOS) can block/wipe localStorage inside the sandboxed frame Apps
+    // Script serves this page in, so a round-trip to the backend is what
+    // actually works reliably across platforms.
+
+    function loadMaxLoads() {
+      google.script.run
+        .withSuccessHandler(function (map) {
+          prRecordsByExercise = map || {};
+          document.querySelectorAll('.exercise-card').forEach(updatePRHint);
+        })
+        .withFailureHandler(function (err) {
+          console.error('Could not load PR data:', err.message);
+        })
+        .getPRRecords();
+    }
+    loadMaxLoads();
+
+    function loadMax1RMs() {
+      google.script.run
+        .withSuccessHandler(function (map) {
+          maxEst1RMByExercise = map || {};
+        })
+        .withFailureHandler(function (err) {
+          console.error('Could not load 1RM data:', err.message);
+        })
+        .getMaxEstimated1RMs();
+    }
+    loadMax1RMs();
+
+    function loadFocusGaps() {
+      google.script.run
+        .withSuccessHandler(function (gaps) {
+          var container = document.getElementById('focus-gaps-list');
+          container.innerHTML = '';
+          if (!gaps || gaps.length === 0) {
+            container.innerHTML = '<span style="font-size:12px;color:#a1a1aa;">No Focus data yet.</span>';
+            return;
+          }
+          gaps.forEach(function (g) {
+            var color = g.daysSince >= 7 ? '#ef4444' : (g.daysSince >= 3 ? '#d97706' : '#16a34a');
+            var pill = document.createElement('span');
+            pill.style.cssText = 'font-size:12px;font-weight:600;padding:4px 8px;border-radius:999px;' +
+              'background:' + color + '1a;color:' + color + ';white-space:nowrap;';
+            pill.textContent = g.focus + ': ' + g.daysSince + 'd';
+            container.appendChild(pill);
+          });
+        })
+        .withFailureHandler(function (err) {
+          console.error('Could not load focus gaps:', err.message);
+        })
+        .getFocusGapsForApp();
+    }
+    loadFocusGaps();
+
+    var focusModeByExercise = {};
+    function loadFocusModes() {
+      google.script.run
+        .withSuccessHandler(function (map) {
+          focusModeByExercise = map || {};
+        })
+        .withFailureHandler(function (err) {
+          console.error('Could not load focus history:', err.message);
+        })
+        .getFocusModeByExercise();
+    }
+    loadFocusModes();
+
+    function parseNumbersClient(str) {
+      if (!str) return [];
+      return str.toString().split(',')
+        .map(function (s) { return parseFloat(s.trim()); })
+        .filter(function (n) { return !isNaN(n); });
+    }
+
+    function findCanonicalExercise(typed) {
+      var lower = typed.toLowerCase();
+      for (var i = 0; i < exerciseOptions.length; i++) {
+        if (exerciseOptions[i].toLowerCase() === lower) return exerciseOptions[i];
+      }
+      return null;
+    }
+
+    // Live "would this be a PR?" check, shown under the Load field as you type —
+    // before the set is even logged.
+    function updatePRHint(card) {
+      var hintEl = card.querySelector('.pr-hint');
+      var exerciseTyped = card.querySelector('.f-exercise').value.trim();
+      var vals = getEffectiveValues(card);
+      var loadTyped = vals.load;
+
+      if (!exerciseTyped || !loadTyped) {
+        hintEl.style.display = 'none';
+        return;
+      }
+
+      var current = getLoadRecordClient(vals.reps, loadTyped);
+      if (!current) {
+        hintEl.style.display = 'none';
+        return;
+      }
+      var newMax = current.maxLoad;
+
+      var canonical = Object.keys(prRecordsByExercise).find(function (name) {
+        return name.toLowerCase() === exerciseTyped.toLowerCase();
+      });
+      var label = canonical || exerciseTyped;
+      var prior = canonical ? prRecordsByExercise[canonical] : null;
+      var prevMax = prior ? prior.maxLoad : undefined;
+
+      hintEl.style.display = 'block';
+      if (prevMax === undefined) {
+        hintEl.className = 'pr-hint new';
+        hintEl.textContent = '🆕 First logged weight for ' + label + ' — this sets the starting PR';
+      } else if (newMax > prevMax) {
+        hintEl.className = 'pr-hint pr';
+        hintEl.textContent = '🔥 That beats your PR of ' + prevMax + 'kg!';
+      } else {
+        hintEl.className = 'pr-hint neutral';
+        hintEl.textContent = 'Current PR: ' + prevMax + 'kg';
+      }
+
+      // Only show reps/seconds when the entered load reaches the all-time load PR.
+      if (prior && newMax < prevMax) return;
+      var iso = isIsometricExercise(label);
+      var unit = iso ? ' sec' : ' reps';
+      var recordLabel = iso ? 'Longest hold at max-ever load' : 'Most reps at max-ever load';
+      if (prior && prior.bestReps !== null) {
+        hintEl.textContent += ' · ' + recordLabel + ': ' + prior.bestReps + unit + ' at ' + prevMax + 'kg.';
+      } else if (prior) {
+        hintEl.textContent += ' · No ' + (iso ? 'hold duration' : 'reps') + ' recorded at ' + prevMax + 'kg yet.';
+      }
+      if (current.bestReps !== null) {
+        if (!prior || newMax > prevMax) {
+          hintEl.textContent += ' · New max-load baseline: ' + current.bestReps + unit + ' at ' + newMax + 'kg.';
+        } else if (prior.bestReps === null || current.bestReps > prior.bestReps) {
+          hintEl.className = 'pr-hint pr';
+          hintEl.textContent += ' · New ' + (iso ? 'hold' : 'rep') + ' PR: ' + current.bestReps + unit + '!';
+        }
+      }
+    }
+
+    // Mirrors getLoadRecord_ in Code.gs; isometric durations remain raw seconds.
+    function getLoadRecordClient(repsStr, loadStr) {
+      function slots(value) {
+        if (value === null || value === undefined || value === '') return [];
+        return value.toString().split(',').map(function (part) {
+          var n = parseFloat(part.trim());
+          return isFinite(n) && n >= 0 ? n : null;
+        });
+      }
+      var reps = slots(repsStr), loads = slots(loadStr);
+      var record = null;
+      for (var i = 0; i < Math.max(reps.length, loads.length); i++) {
+        var load = loads.length ? loads[Math.min(i, loads.length - 1)] : null;
+        var rep = reps.length === 1 ? reps[0] : (i < reps.length ? reps[i] : null);
+        if (load === null) continue;
+        if (!record || load > record.maxLoad) record = { maxLoad: load, bestReps: rep };
+        else if (load === record.maxLoad && rep !== null &&
+                 (record.bestReps === null || rep > record.bestReps)) record.bestReps = rep;
+      }
+      return record;
+    }
+
+    function formatPRMessage(p) {
+      var unit = p.isIsometric ? ' sec' : ' reps';
+      if (p.type === 'reps') {
+        return '🎉 New ' + (p.isIsometric ? 'hold' : 'rep') + ' PR — ' + p.exercise + ': ' +
+          p.bestReps + unit + ' at max-ever load ' + p.newMax + 'kg' +
+          (p.previousReps !== null ? ' (prev ' + p.previousReps + unit + ')' : ' (first recorded at this load)');
+      }
+      return '🎉 New load PR — ' + p.exercise + ': ' + p.newMax + 'kg' +
+        (p.bestReps !== null ? ' · ' + p.bestReps + unit + ' at this load' : '') +
+        (p.previousMax !== null ? ' (prev ' + p.previousMax + 'kg)' : ' (first time logged)');
+    }
+
+    // Relative Intensity zones — a %1RM-by-reps chart (a 10-rep set at a given
+    // %1RM is much harder than a 1-rep single at the same %1RM), condensed to
+    // six named zones. Each zone's two numbers are its ceiling at 1 rep and
+    // at 10 reps; ceilings are linearly interpolated between those for the
+    // set's actual rep count. At any fixed rep count the six ceilings stay
+    // in strict order (checked at both endpoints), so zones never truly
+    // overlap once a rep count is plugged in — the raw table just looks
+    // that way because each zone spans the full 1-10 rep range.
+    // Reps > 10 keep extrapolating the same slope (by design — a set that
+    // long means compensating for light load with volume, and the formulas
+    // are expected to degrade further out; there's no clean fix for that).
+    var INTENSITY_ZONES = [
+      { name: 'Too Light', at1: 67.5, at10: 40 },
+      { name: 'Light', at1: 72.5, at10: 42.5 },
+      { name: 'Light+', at1: 77.5, at10: 47.5 },
+      { name: 'Moderate', at1: 92.5, at10: 52.5 },
+      { name: 'Heavy', at1: 97.5, at10: 67.5 },
+      { name: 'Max', at1: 100, at10: 72.5 }
+    ];
+
+    function classifyIntensityZone(pct, reps) {
+      for (var i = 0; i < INTENSITY_ZONES.length; i++) {
+        var z = INTENSITY_ZONES[i];
+        var ceiling = z.at1 + (z.at10 - z.at1) * (reps - 1) / 9;
+        if (pct <= ceiling) return z.name;
+      }
+      return 'Max';
+    }
+
+    // Finds the (reps, load) pair for whichever set has the heaviest load in
+    // a row — same reps[i]/load[i] pairing convention as computeVolume_.
+    // Mirrors isIsometricExercise_ in Code.gs — any exercise name containing
+    // "iso" is treated as isometric, so its typed "reps" (actually hold
+    // duration in seconds) doesn't get misread as an actual rep count.
+    function isIsometricExercise(exerciseName) {
+      return /iso/i.test(exerciseName || '');
+    }
+
+    function getTopSetClient(repsStr, loadStr, isIso) {
+      var repsArr = parseNumbersClient(repsStr);
+      var loadArr = parseNumbersClient(loadStr);
+      if (loadArr.length === 0) return null; // no load, genuinely nothing to show
+
+      if (isIso) {
+        // Unparseable hold duration ("failure", blank) still counts as one hold
+        repsArr = repsArr.length > 0 ? repsArr.map(function () { return 1; }) : [1];
+      } else if (repsArr.length === 0) {
+        return null;
+      }
+
+      var bestLoad = -Infinity, bestReps = null;
+      for (var i = 0; i < repsArr.length; i++) {
+        var l = loadArr.length > 1 ? (loadArr[i] !== undefined ? loadArr[i] : loadArr[loadArr.length - 1])
+                                    : (loadArr[0] || 0);
+        if (l > bestLoad) { bestLoad = l; bestReps = repsArr[i]; }
+      }
+      return { load: bestLoad, reps: bestReps };
+    }
+
+    var INTENSITY_ZONE_COLORS = {
+      'Too Light': '#a1a1aa', 'Light': '#71717a', 'Light+': '#52525b',
+      'Moderate': '#2563eb', 'Heavy': '#d97706', 'Max': '#ef4444'
+    };
+
+    // Live Relative Intensity hint: compares today's heaviest set against
+    // your PRIOR all-time-best blended 1RM (Epley+Brzycki averaged), never
+    // today's own estimate — reads as "how hard is this relative to what
+    // I've shown I can do," not a number that inflates itself. Hidden with
+    // no history to compare against, since a % of nothing isn't meaningful.
+    // Isometrics use reps=1 for the zone lookup (same convention as the
+    // backend), since the typed number there is hold-duration, not reps.
+    function updateEst1RMHint(card) {
+      var hintEl = card.querySelector('.est1rm-hint');
+      var exerciseTyped = card.querySelector('.f-exercise').value.trim();
+      var vals = getEffectiveValues(card);
+
+      if (!exerciseTyped || !vals.load || !vals.reps) {
+        hintEl.style.display = 'none';
+        return;
+      }
+
+      var topSet = getTopSetClient(vals.reps, vals.load, isIsometricExercise(exerciseTyped));
+      if (!topSet || topSet.load <= 0 || !topSet.reps) {
+        hintEl.style.display = 'none';
+        return;
+      }
+
+      var canonical = findCanonicalExercise(exerciseTyped);
+      var prior = canonical ? maxEst1RMByExercise[canonical] : undefined;
+      if (!prior || (prior.epley <= 0 && prior.brzycki <= 0)) {
+        hintEl.style.display = 'none'; // no history yet — nothing to compare against
+        return;
+      }
+
+      var blended = (prior.epley + prior.brzycki) / 2;
+      if (blended <= 0) { hintEl.style.display = 'none'; return; }
+
+      var pct = Math.round((topSet.load / blended) * 1000) / 10;
+      var zone = classifyIntensityZone(pct, topSet.reps);
+
+      hintEl.style.display = 'block';
+      hintEl.style.color = INTENSITY_ZONE_COLORS[zone] || '#71717a';
+      hintEl.style.fontWeight = '700';
+      hintEl.textContent = zone + ' (' + pct + '%)';
+    }
+
+    // Relabels Reps -> "Hold (sec)" for isometric exercises, both the main
+    // field and any per-set rows, so it's unambiguous that duration goes
+    // there, not an actual rep count.
+    function updateIsoLabels(card) {
+      var exerciseTyped = card.querySelector('.f-exercise').value.trim();
+      var iso = isIsometricExercise(exerciseTyped);
+      var label = card.querySelector('.reps-label');
+      var repsInputEl = card.querySelector('.f-reps');
+
+      label.textContent = iso ? 'Hold (sec)' : 'Reps';
+      repsInputEl.placeholder = iso ? 'e.g. 30 or 30,45,60' : 'e.g. 8 or 8,6,6';
+      card.querySelectorAll('.set-reps').forEach(function (input) {
+        input.placeholder = iso ? 'Sec' : 'Reps';
+      });
+    }
+
+    // Both hints depend on overlapping fields (exercise/load/reps), so every
+    // call site updates both together rather than tracking them separately.
+    // Iso relabeling rides along here too, since it's driven by the same
+    // exercise-name-changed event as everything else.
+    function updateAllHints(card) {
+      updateIsoLabels(card);
+      updatePRHint(card);
+      updateEst1RMHint(card);
+    }
+
+    function renderDatalist(id, options) {
+      var list = document.getElementById(id);
+      list.innerHTML = '';
+      options.forEach(function (name) {
+        var opt = document.createElement('option');
+        opt.value = name;
+        list.appendChild(opt);
+      });
+    }
+
+    // Load previously-used exercise + focus values for autocomplete
+    google.script.run
+      .withSuccessHandler(function (list) {
+        exerciseOptions = list || [];
+        renderDatalist('exercise-datalist', exerciseOptions);
+      })
+      .withFailureHandler(function (err) {
+        console.error('Could not load exercise list:', err.message);
+      })
+      .getExistingExercises();
+
+    function loadTemplateOptions() {
+      google.script.run
+        .withSuccessHandler(function (names) {
+          var select = document.getElementById('template-select');
+          select.innerHTML = '<option value="">-- Select a template --</option>';
+          (names || []).forEach(function (name) {
+            var opt = document.createElement('option');
+            opt.value = name;
+            opt.textContent = name;
+            select.appendChild(opt);
+          });
+        })
+        .withFailureHandler(function (err) {
+          console.error('Could not load templates:', err.message);
+        })
+        .getTemplates();
+    }
+    loadTemplateOptions();
+
+    // Small Levenshtein distance, used only to catch likely typos
+    function levenshtein(a, b) {
+      var m = a.length, n = b.length;
+      var dp = [];
+      for (var i = 0; i <= m; i++) dp.push([i]);
+      for (var j = 0; j <= n; j++) dp[0][j] = j;
+      for (i = 1; i <= m; i++) {
+        for (j = 1; j <= n; j++) {
+          dp[i][j] = a[i - 1] === b[j - 1]
+            ? dp[i - 1][j - 1]
+            : 1 + Math.min(dp[i - 1][j - 1], dp[i - 1][j], dp[i][j - 1]);
+        }
+      }
+      return dp[m][n];
+    }
+
+    // Finds a close-but-not-exact match to flag as "Did you mean?"
+    function findCloseMatch(typed) {
+      if (!typed || typed.length < 3) return null;
+      var lower = typed.toLowerCase();
+      var best = null;
+      var bestDist = Infinity;
+      exerciseOptions.forEach(function (name) {
+        var nameLower = name.toLowerCase();
+        if (nameLower === lower) return; // exact match, no suggestion needed
+        var dist = levenshtein(lower, nameLower);
+        if (dist < bestDist) { bestDist = dist; best = name; }
+      });
+      // Only suggest for small typos, scaled loosely to word length
+      if (best && bestDist <= 2 && bestDist < typed.length) return best;
+      return null;
+    }
+
+    function todayISO() {
+      var d = new Date();
+      var tzOffset = d.getTimezoneOffset() * 60000;
+      return new Date(d - tzOffset).toISOString().slice(0, 10);
+    }
+    document.getElementById('date').value = todayISO();
+
+    // --- Local draft autosave (survives accidental reloads, sleep, scroll-refresh) ---
+
+    function serializeDraft() {
+      var exercises = [];
+      document.querySelectorAll('.exercise-card').forEach(function (card) {
+        var mode = card.dataset.mode;
+        var perSetRows = [];
+        if (mode === 'perset') {
+          card.querySelectorAll('.set-row').forEach(function (row) {
+            perSetRows.push({
+              reps: row.querySelector('.set-reps').value,
+              load: row.querySelector('.set-load').value
+            });
+          });
+        }
+        exercises.push({
+          exercise: card.querySelector('.f-exercise').value,
+          sets: card.querySelector('.f-sets').value,
+          reps: card.querySelector('.f-reps').value,
+          load: card.querySelector('.f-load').value,
+          focusSelect: card.querySelector('.f-focus-select').value,
+          focusOther: card.querySelector('.f-focus-other').value,
+          notes: card.querySelector('.f-notes').value,
+          mode: mode,
+          perSetRows: perSetRows
+        });
+      });
+      return {
+        date: document.getElementById('date').value,
+        exercises: exercises,
+        sessionStart: sessionStartTime.toISOString(),
+        savedAt: new Date().toISOString()
+      };
+    }
+
+    function saveDraft() {
+      var draft = serializeDraft();
+      var hasContent = draft.exercises.some(function (ex) {
+        return ex.exercise || ex.sets || ex.reps || ex.load || ex.focusSelect || ex.focusOther || ex.notes;
+      });
+      var json = hasContent ? JSON.stringify(draft) : '';
+      google.script.run
+        .withFailureHandler(function (err) { console.error('Could not save draft:', err.message); })
+        .saveDraftServer(json);
+    }
+
+    function clearDraft() {
+      google.script.run
+        .withFailureHandler(function (err) { console.error('Could not clear draft:', err.message); })
+        .clearDraftServer();
+    }
+
+    var draftSaveTimeout = null;
+    function scheduleDraftSave() {
+      clearTimeout(draftSaveTimeout);
+      draftSaveTimeout = setTimeout(saveDraft, 400);
+    }
+    // One delegated listener catches every field, including ones added later
+    // (new exercise cards, per-set rows) — no need to wire each individually.
+    document.body.addEventListener('input', scheduleDraftSave);
+    document.body.addEventListener('change', scheduleDraftSave);
+
+    function restoreDraftFromObject(draft) {
+      document.getElementById('date').value = draft.date || todayISO();
+      document.getElementById('exercise-list').innerHTML = '';
+      exerciseCount = 0;
+
+      if (draft.sessionStart) {
+        var parsed = new Date(draft.sessionStart);
+        if (!isNaN(parsed.getTime())) sessionStartTime = parsed;
+      }
+
+      draft.exercises.forEach(function (ex) {
+        addExerciseBlock({
+          exercise: ex.exercise, sets: ex.sets, reps: ex.reps, load: ex.load,
+          focus: ex.focusSelect === '__other__' ? ex.focusOther : ex.focusSelect,
+          notes: ex.notes
+        });
+        var card = document.getElementById('exercise-' + exerciseCount);
+        if (ex.mode === 'perset') {
+          card.querySelector('.toggle-per-set-link').click(); // switches mode + seeds one row
+          var container = card.querySelector('.per-set-rows');
+          container.innerHTML = '';
+          ex.perSetRows.forEach(function (row) {
+            addSetRow(card);
+            var last = container.lastElementChild;
+            last.querySelector('.set-reps').value = row.reps || '';
+            last.querySelector('.set-load').value = row.load || '';
+          });
+          if (container.children.length === 0) addSetRow(card);
+          card.querySelector('.f-sets').value = container.children.length;
+          updateSetPreview(card);
+          updateAllHints(card);
+        }
+      });
+
+      if (document.querySelectorAll('.exercise-card').length === 0) addExerciseBlock();
+    }
+
+    function tryRestoreDraft() {
+      google.script.run
+        .withSuccessHandler(function (draftJson) {
+          if (!draftJson) { addExerciseBlock(); return; }
+
+          var draft;
+          try { draft = JSON.parse(draftJson); } catch (e) { clearDraft(); addExerciseBlock(); return; }
+          if (!draft || !draft.exercises || draft.exercises.length === 0) { addExerciseBlock(); return; }
+
+          var savedAtStr = draft.savedAt ? new Date(draft.savedAt).toLocaleString() : 'earlier';
+          var restore = confirm('Found an unsaved session from ' + savedAtStr + '. Restore it?');
+          if (!restore) {
+            clearDraft();
+            addExerciseBlock();
+            return;
+          }
+          restoreDraftFromObject(draft);
+        })
+        .withFailureHandler(function (err) {
+          console.error('Could not check for a saved draft:', err.message);
+          addExerciseBlock();
+        })
+        .getDraftServer();
+    }
+
+    // Native "leave site?" prompt as an extra safety net for accidental
+    // navigation/reload. Not guaranteed to fire on mobile OS backgrounding —
+    // the draft autosave above is the real protection for that case.
+    window.addEventListener('beforeunload', function (e) {
+      var hasContent = Array.from(document.querySelectorAll('.f-exercise')).some(function (inp) {
+        return inp.value.trim() !== '';
+      });
+      if (hasContent) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    });
+
+    function buildFocusOptionsHtml() {
+      var html = '<option value="">-- Select --</option>';
+      FOCUS_GROUPS.forEach(function (g) {
+        html += '<option value="' + g + '">' + g + '</option>';
+      });
+      html += '<option value="__other__">Other...</option>';
+      return html;
+    }
+
+    // Sets the Focus dropdown/Other field from a stored value (e.g. loading a
+    // template saved before this dropdown existed, or an old free-text value)
+    function setFocusValue(card, value) {
+      var select = card.querySelector('.f-focus-select');
+      var other = card.querySelector('.f-focus-other');
+      if (!value) {
+        select.value = '';
+        other.style.display = 'none';
+        other.value = '';
+        return;
+      }
+      if (FOCUS_GROUPS.indexOf(value) !== -1) {
+        select.value = value;
+        other.style.display = 'none';
+        other.value = '';
+      } else {
+        select.value = '__other__';
+        other.style.display = 'block';
+        other.value = value;
+      }
+    }
+
+    // Reads the effective Focus value from the dropdown/Other pair
+    function getFocusValue(card) {
+      var select = card.querySelector('.f-focus-select');
+      if (select.value === '__other__') {
+        return card.querySelector('.f-focus-other').value.trim();
+      }
+      return select.value;
+    }
+
+    // Adds one "Set N: Reps | Load" row inside a card's per-set container
+    function addSetRow(card) {
+      var container = card.querySelector('.per-set-rows');
+      var row = document.createElement('div');
+      row.className = 'set-row';
+      var setNum = container.children.length + 1;
+      row.innerHTML =
+        '<span class="set-label">Set ' + setNum + '</span>' +
+        '<input type="number" class="set-reps" placeholder="Reps">' +
+        '<input type="number" class="set-load" placeholder="Load kg">' +
+        '<button type="button" class="set-remove-btn">×</button>';
+      container.appendChild(row);
+      if (card.dataset.mode === 'perset') {
+        card.querySelector('.f-sets').value = container.children.length;
+      }
+
+      row.querySelector('.set-reps').addEventListener('input', function () { updateSetPreview(card); updateAllHints(card); });
+      row.querySelector('.set-load').addEventListener('input', function () { updateSetPreview(card); updateAllHints(card); });
+      row.querySelector('.set-remove-btn').addEventListener('click', function () {
+        if (container.children.length <= 1) return; // keep at least one row
+        row.remove();
+        renumberSetRows(card);
+        card.querySelector('.f-sets').value = container.children.length;
+        updateSetPreview(card);
+        updateAllHints(card);
+        scheduleDraftSave();
+      });
+    }
+
+    function renumberSetRows(card) {
+      card.querySelectorAll('.set-row').forEach(function (row, i) {
+        row.querySelector('.set-label').textContent = 'Set ' + (i + 1);
+      });
+    }
+
+    // Adds/removes per-set rows so their count matches a target (e.g. typed
+    // into the Sets field), preserving existing row data where possible.
+    function syncSetRowsToCount(card, targetCount) {
+      var container = card.querySelector('.per-set-rows');
+      if (targetCount < 1) targetCount = 1;
+      while (container.children.length < targetCount) addSetRow(card);
+      while (container.children.length > targetCount) container.lastElementChild.remove();
+      renumberSetRows(card);
+      card.querySelector('.f-sets').value = container.children.length;
+    }
+
+    // Reads current reps/load (comma-joined) and set count from the per-set rows
+    function readPerSetValues(card) {
+      var reps = [], loads = [];
+      card.querySelectorAll('.set-row').forEach(function (row) {
+        var r = row.querySelector('.set-reps').value.trim();
+        var l = row.querySelector('.set-load').value.trim();
+        if (r !== '' || l !== '') {
+          reps.push(r !== '' ? r : '0');
+          loads.push(l !== '' ? l : '0');
+        }
+      });
+      return { reps: reps.join(','), load: loads.join(','), sets: reps.length };
+    }
+
+    function updateSetPreview(card) {
+      var preview = card.querySelector('.per-set-preview');
+      var vals = readPerSetValues(card);
+      if (!vals.reps && !vals.load) {
+        preview.textContent = '';
+        return;
+      }
+      preview.textContent = 'Will save as → Reps: ' + vals.reps + ' | Load: ' + vals.load;
+    }
+
+    // Returns { reps, load, sets } from whichever mode (simple or per-set) is active
+    function getEffectiveValues(card) {
+      if (card.dataset.mode === 'perset') {
+        return readPerSetValues(card);
+      }
+      return {
+        reps: card.querySelector('.f-reps').value.trim(),
+        load: card.querySelector('.f-load').value.trim(),
+        sets: card.querySelector('.f-sets').value.trim()
+      };
+    }
+
+    function addExerciseBlock(prefill) {
+      exerciseCount++;
+      var id = exerciseCount;
+      var card = document.createElement('div');
+      card.className = 'exercise-card';
+      card.id = 'exercise-' + id;
+      card.innerHTML =
+        '<div class="header">' +
+          '<span>Exercise ' + id + '</span>' +
+          '<button type="button" class="remove-btn" onclick="removeExercise(' + id + ')">Remove</button>' +
+        '</div>' +
+        '<label>Exercise</label>' +
+        '<input type="text" class="f-exercise" list="exercise-datalist" placeholder="e.g. Back Squat" autocomplete="off">' +
+        '<div class="suggestion-chip"></div>' +
+        '<div class="row-2">' +
+          '<div><label>Sets</label><input type="number" class="f-sets" min="0"></div>' +
+          '<div class="field-reps"><label class="reps-label">Reps</label><input type="text" class="f-reps" placeholder="e.g. 8 or 8,6,6"></div>' +
+        '</div>' +
+        '<div class="row-2">' +
+          '<div class="field-load"><label>Load (kg)</label><input type="text" class="f-load" placeholder="e.g. 60 or 60,65,65"></div>' +
+          '<div><label>Focus</label><select class="f-focus-select">' + buildFocusOptionsHtml() + '</select>' +
+            '<input type="text" class="f-focus-other" placeholder="Specify muscle group" style="display:none;margin-top:6px;"></div>' +
+        '</div>' +
+        '<div class="pr-hint"></div><div class="est1rm-hint"></div>' +
+        '<div class="toggle-per-set"><a class="toggle-per-set-link">+ Enter sets individually (pyramid, etc.)</a></div>' +
+        '<div class="per-set-container">' +
+          '<div class="per-set-rows"></div>' +
+          '<button type="button" class="add-set-btn">+ Add Set</button>' +
+          '<div class="per-set-preview"></div>' +
+          '<div class="toggle-per-set"><a class="toggle-per-set-back">← Back to single entry</a></div>' +
+        '</div>' +
+        '<label>Notes</label>' +
+        '<textarea class="f-notes" rows="2"></textarea>';
+      document.getElementById('exercise-list').appendChild(card);
+      card.dataset.mode = 'simple';
+
+      if (prefill) {
+        card.querySelector('.f-exercise').value = prefill.exercise || '';
+        card.querySelector('.f-sets').value = prefill.sets || '';
+        card.querySelector('.f-reps').value = prefill.reps || '';
+        card.querySelector('.f-load').value = prefill.load || '';
+        card.querySelector('.f-notes').value = prefill.notes || '';
+        setFocusValue(card, prefill.focus || '');
+      }
+
+      var exerciseInput = card.querySelector('.f-exercise');
+      var loadInput = card.querySelector('.f-load');
+      var repsInput = card.querySelector('.f-reps');
+      var chip = card.querySelector('.suggestion-chip');
+      var repsField = card.querySelector('.field-reps');
+      var loadField = card.querySelector('.field-load');
+      var perSetContainer = card.querySelector('.per-set-container');
+      var toggleLink = card.querySelector('.toggle-per-set-link');
+      var toggleWrap = toggleLink.parentElement;
+      var backLink = card.querySelector('.toggle-per-set-back');
+      var focusSelect = card.querySelector('.f-focus-select');
+      var focusOther = card.querySelector('.f-focus-other');
+
+      focusSelect.addEventListener('change', function () {
+        if (focusSelect.value === '__other__') {
+          focusOther.style.display = 'block';
+          focusOther.focus();
+        } else {
+          focusOther.style.display = 'none';
+          focusOther.value = '';
+        }
+      });
+
+      var setsInput = card.querySelector('.f-sets');
+
+      addSetRow(card); // always keep one row ready in case the user switches modes
+
+      toggleLink.addEventListener('click', function (e) {
+        e.preventDefault();
+        card.dataset.mode = 'perset';
+        repsField.style.display = 'none';
+        loadField.style.display = 'none';
+        perSetContainer.style.display = 'block';
+        toggleWrap.style.display = 'none';
+
+        // Seed the per-set rows from whatever's currently in the Sets field
+        var seedCount = parseInt(setsInput.value, 10);
+        syncSetRowsToCount(card, (!isNaN(seedCount) && seedCount >= 1) ? seedCount : 1);
+
+        // Single mode's values are canonical for Set 1 going into per-set mode
+        // (e.g. you logged a set, realized the load was wrong, and want to
+        // dial it back for the remaining sets without re-typing what already happened)
+        var firstRow = card.querySelector('.per-set-rows').children[0];
+        if (firstRow) {
+          firstRow.querySelector('.set-reps').value = repsInput.value.trim();
+          firstRow.querySelector('.set-load').value = loadInput.value.trim();
+        }
+
+        updateSetPreview(card);
+        updateAllHints(card);
+        scheduleDraftSave();
+      });
+      backLink.addEventListener('click', function (e) {
+        e.preventDefault();
+        card.dataset.mode = 'simple';
+        repsField.style.display = 'block';
+        loadField.style.display = 'block';
+        perSetContainer.style.display = 'none';
+        toggleWrap.style.display = 'block';
+
+        // Set 1 is canonical when collapsing back to single mode
+        var firstRow = card.querySelector('.per-set-rows').children[0];
+        if (firstRow) {
+          repsInput.value = firstRow.querySelector('.set-reps').value || '';
+          loadInput.value = firstRow.querySelector('.set-load').value || '';
+        }
+
+        updateAllHints(card);
+        scheduleDraftSave();
+      });
+      card.querySelector('.add-set-btn').addEventListener('click', function () {
+        addSetRow(card);
+        updateSetPreview(card);
+        updateAllHints(card);
+        scheduleDraftSave();
+      });
+
+      // While in per-set mode, typing a number into Sets adds/removes rows to match
+      setsInput.addEventListener('input', function () {
+        if (card.dataset.mode !== 'perset') return;
+        var n = parseInt(setsInput.value, 10);
+        if (!isNaN(n) && n >= 1) {
+          syncSetRowsToCount(card, n);
+          updateSetPreview(card);
+          updateAllHints(card);
+        }
+      });
+
+      exerciseInput.addEventListener('blur', function () {
+        var match = findCloseMatch(exerciseInput.value.trim());
+        if (match) {
+          chip.textContent = 'Did you mean "' + match + '"?';
+          chip.style.display = 'block';
+          chip.onclick = function () {
+            exerciseInput.value = match;
+            chip.style.display = 'none';
+            var focusSelectAfterFix = card.querySelector('.f-focus-select');
+            if (focusModeByExercise[match] && focusSelectAfterFix.value === '') {
+              setFocusValue(card, focusModeByExercise[match]);
+            }
+            updateAllHints(card);
+            scheduleDraftSave();
+          };
+        } else {
+          chip.style.display = 'none';
+        }
+
+        // Auto-fill Focus from this exercise's most common history — only
+        // when nothing's been picked yet, never overriding a manual choice.
+        var canonical = findCanonicalExercise(exerciseInput.value.trim());
+        var focusSelectEl = card.querySelector('.f-focus-select');
+        if (canonical && focusModeByExercise[canonical] && focusSelectEl.value === '') {
+          setFocusValue(card, focusModeByExercise[canonical]);
+        }
+
+        updateAllHints(card);
+      });
+      exerciseInput.addEventListener('input', function () { updateAllHints(card); });
+      loadInput.addEventListener('input', function () { updateAllHints(card); });
+      repsInput.addEventListener('input', function () { updateAllHints(card); });
+
+      if (prefill) updateAllHints(card);
+      if (!prefill) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    // Reads all exercise cards currently on screen into plain objects.
+    // Shared by both "Save Session" and "Save as Template".
+    function collectExercises() {
+      var exercises = [];
+      document.querySelectorAll('.exercise-card').forEach(function (card) {
+        var exercise = card.querySelector('.f-exercise').value.trim();
+        if (!exercise) return; // skip empty blocks silently
+        var vals = getEffectiveValues(card);
+        exercises.push({
+          exercise: exercise,
+          sets: vals.sets,
+          reps: vals.reps,
+          load: vals.load,
+          focus: getFocusValue(card),
+          notes: card.querySelector('.f-notes').value.trim()
+        });
+      });
+      return exercises;
+    }
+
+    function removeExercise(id) {
+      var el = document.getElementById('exercise-' + id);
+      if (el) {
+        el.remove();
+        scheduleDraftSave();
+      }
+    }
+
+    document.getElementById('add-exercise-btn').addEventListener('click', function () {
+      addExerciseBlock();
+      scheduleDraftSave();
+    });
+
+    document.getElementById('template-select').addEventListener('change', function () {
+      var name = this.value;
+      if (!name) return;
+
+      google.script.run
+        .withSuccessHandler(function (exercises) {
+          document.getElementById('exercise-list').innerHTML = '';
+          exerciseCount = 0;
+          if (exercises && exercises.length > 0) {
+            exercises.forEach(function (ex) { addExerciseBlock(ex); });
+          } else {
+            addExerciseBlock();
+          }
+          scheduleDraftSave();
+        })
+        .withFailureHandler(function (err) {
+          alert('Could not load template: ' + err.message);
+        })
+        .getTemplateExercises(name);
+    });
+
+    document.getElementById('save-template-btn').addEventListener('click', function () {
+      var exercises = collectExercises();
+      if (exercises.length === 0) {
+        alert('Fill in at least one exercise before saving a template.');
+        return;
+      }
+      var name = prompt('Name this template (e.g. "Push Day"):');
+      if (!name || !name.trim()) return;
+
+      var btn = this;
+      btn.disabled = true;
+      btn.textContent = 'Saving template...';
+
+      google.script.run
+        .withSuccessHandler(function () {
+          btn.disabled = false;
+          btn.textContent = 'Save Current Exercises as Template';
+          loadTemplateOptions();
+          var statusEl = document.getElementById('status');
+          statusEl.textContent = 'Template "' + name.trim() + '" saved.';
+          statusEl.className = 'success';
+        })
+        .withFailureHandler(function (err) {
+          btn.disabled = false;
+          btn.textContent = 'Save Current Exercises as Template';
+          alert('Could not save template: ' + err.message);
+        })
+        .saveTemplate(name.trim(), exercises);
+    });
+
+    // Restore any unsaved draft from a previous session, or start fresh
+    tryRestoreDraft();
+
+    document.getElementById('submit-btn').addEventListener('click', function () {
+      var statusEl = document.getElementById('status');
+      var date = document.getElementById('date').value;
+
+      if (!date) {
+        statusEl.textContent = 'Please set a date.';
+        statusEl.className = 'error';
+        return;
+      }
+
+      var exercises = collectExercises();
+
+      if (exercises.length === 0) {
+        statusEl.textContent = 'Fill in at least one exercise name.';
+        statusEl.className = 'error';
+        return;
+      }
+
+      var btn = document.getElementById('submit-btn');
+      btn.disabled = true;
+      btn.textContent = 'Saving...';
+      statusEl.textContent = '';
+      statusEl.className = '';
+
+      google.script.run
+        .withSuccessHandler(function (result) {
+          var message = 'Saved ' + result.rowsAdded + ' exercise(s)!';
+          if (result.prs && result.prs.length > 0) {
+            var prLines = result.prs.map(formatPRMessage);
+            message += '\n' + prLines.join('\n');
+          }
+          statusEl.innerText = message;
+          statusEl.className = 'success';
+          btn.disabled = false;
+          btn.textContent = 'Save Session';
+
+          // Fold any newly-typed exercise names into the autocomplete list
+          exercises.forEach(function (ex) {
+            if (ex.exercise && exerciseOptions.indexOf(ex.exercise) === -1) {
+              exerciseOptions.push(ex.exercise);
+            }
+          });
+          exerciseOptions.sort();
+          renderDatalist('exercise-datalist', exerciseOptions);
+          loadMaxLoads();
+          loadMax1RMs();
+          loadFocusGaps();
+          loadFocusModes();
+          clearDraft();
+          document.getElementById('exercise-list').innerHTML = '';
+          exerciseCount = 0;
+          addExerciseBlock();
+          document.getElementById('date').value = todayISO();
+          sessionStartTime = new Date();
+        })
+        .withFailureHandler(function (err) {
+          statusEl.textContent = 'Error: ' + err.message;
+          statusEl.className = 'error';
+          btn.disabled = false;
+          btn.textContent = 'Save Session';
+        })
+        .submitSession({ date: date, exercises: exercises, sessionStart: sessionStartTime.toISOString() });
+    });
+  </script>
+</body>
+</html>
