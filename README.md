@@ -2,6 +2,24 @@
 
 A self-hosted Google Apps Script workout journal backed by your own Google Sheet. Log exercises from a web app, restore unfinished sessions, reuse templates, and review training history through a dashboard and weekly email digest.
 
+## Who is this for?
+
+Fitness Journal is my attempt to make logging my workouts easier while gathering more actionable information from those logs. **"You can't improve what you don't measure."**
+
+I used to log my workouts in my phone's Notes app and then transcribe that information into an Excel sheet. I had the raw data, but gathering it was time-consuming, and what I ended up with was mostly rows and rows of workout information that were difficult to navigate and hard to act upon.
+
+I could have paid for any number of fitness apps, but I wanted to retain control of my information and be able to access it whenever I wanted.
+
+In my experience, using the app has made me more involved in my workouts and made the process more enjoyable. The information I've gathered has been valuable to me, even when its value is simply being able to see my progress over time.
+
+Deploying and setting up this app is definitely more technically involved than using a paid fitness app, but what you get in return is:
+
+- Freedom: The app and the code are yours, forever.
+- More privacy: Your workout data remains in your own Google Sheet rather than in a separate fitness platform.
+- Access: As long as Google Apps Script and Google Sheets remain available, you'll be able to access your app and its underlying data.
+
+If you're starting your own fitness journey and want a way to track your progress indefinitely without paying for a subscription, and retaining control of all the underlying information, maybe this is for you.
+
 ## Major capabilities
 
 - Log straight sets or individual sets with different reps and loads.
@@ -15,16 +33,6 @@ A self-hosted Google Apps Script workout journal backed by your own Google Sheet
 
 - [Setup guide](SETUP.md): deployment, permissions, mobile shortcuts, troubleshooting, and updates.
 - [Analytics guide](ANALYTICS.md): dashboard and digest contents, calculations, and limitations.
-
-## Who is this for?
-
-This Fitness Journal app is my own attempt to streamline logging my workouts and gathering actionable information from those logs. "You can't improve what you don't measure". It started as clear, easy alternative to using my phone's Notes app and spending time interpreting and copying that information into an Excel sheet. In my personal opinion, it's led to me being more involved in my workouts, and enjoying the process more. The information I've gathered is very valuable, and just being able to visualize my progress and discipline in graphs and charts is a huge motivation boon. Hope this serves you as well as it has me
-
-Deploying and setting up this app is definitely more involved technically than using a paid app, but what you get in return is:
-
-- **Freedom**: The app and the code are yours, forever.
-- **More Privacy**: Inasmuch as a Google Sheet is private information.
-- **Access**: As long as Google Apps Script works, you'll be able to use your app.
 
 ## Quick installation
 
