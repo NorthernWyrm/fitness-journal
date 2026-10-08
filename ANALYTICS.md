@@ -87,3 +87,17 @@ Combined Focus labels use the first listed muscle segment for classification rat
 Dashboard windows are recalculated when the dashboard is rebuilt, rather than continuously as the date changes. Missing loads, inconsistent exercise names, and incomplete per-set entries affect the resulting summaries.
 
 Estimated 1RM, workload ratios, and plateau labels are summaries of your logs. Short or incomplete histories can distort them; use them to review trends rather than as precise measures of capacity or recovery.
+
+## Focus associations and Brand context
+
+The existing per-exercise summary now includes Focus, with all historically logged associations. The app reads this summary and uses Last Performed to apply EXERCISE_SUGGESTION_MAX_AGE_DAYS (30 by default). Exact names from full history still support matching and PR/1RM hints.
+
+Muscle Group Gaps credits every group listed in a combined focus, regardless of comma spacing; Legs,Glutes,Back updates three groups. Volume balance continues assigning each row's volume to its first-listed group, so volume is not counted multiple times.
+
+Brand is optional context stored on each workout row. Volume, PRs, progression, and 1RM remain grouped by Exercise across brands. Manually unifying exercise names changes their grouping but does not change total volume. A Deltas tab or brand comparison report is not implemented.
+
+## Bodyweight and assisted loads
+
+ExerciseSettings stores persistent bodyweight classifications with TRUE/FALSE overrides. Negative loads seed missing classifications; deleting negative history does not remove an existing TRUE. Reporting substitutes smoothed bodyweight plus logged load, averaged over the last five weigh-ins on or before the workout date. Earlier workouts use the earliest weigh-in, and missing weigh-ins produce zero bodyweight volume. Raw workout loads are preserved.
+
+The app's PRs compare raw signed loads, including progress from assistance through zero to added weight. Relative intensity is hidden for classified bodyweight exercises; dashboard estimated 1RM remains available. Negative loads with an explicit FALSE setting stop saving/reporting until the conflict is resolved. Digest and app PR semantics remain distinct.

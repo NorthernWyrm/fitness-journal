@@ -131,6 +131,8 @@
   <div class="top-card">
     <label for="date">Date</label>
     <input type="date" id="date">
+    <label for="bodyweight">Bodyweight (kg, optional)</label>
+    <input type="text" inputmode="decimal" id="bodyweight" placeholder="e.g. 100.25">
 
     <label for="template-select">Load Template (optional)</label>
     <select id="template-select">
@@ -146,7 +148,6 @@
   <button class="submit-btn" id="submit-btn">Save Session</button>
   <div id="status"></div>
 
-  <datalist id="exercise-datalist"></datalist>
 
   <style>
     .suggestion-chip {
@@ -226,7 +227,10 @@
 
   <script>
     var exerciseCount = 0;
-    var exerciseOptions = [];
+    var exerciseOptions = [];        // all-time: used for canonical matching, PR/1RM hints
+    var exerciseCatalog = [];
+    var suggestionMaxAgeDays = 30;
+    var recentExerciseOptions = [];  // recent only: used for autocomplete + "Did you mean?"
     var prRecordsByExercise = {};
     var maxEst1RMByExercise = {};
 
@@ -297,17 +301,7 @@
     loadFocusGaps();
 
     var focusModeByExercise = {};
-    function loadFocusModes() {
-      google.script.run
-        .withSuccessHandler(function (map) {
-          focusModeByExercise = map || {};
-        })
-        .withFailureHandler(function (err) {
-          console.error('Could not load focus history:', err.message);
-        })
-        .getFocusModeByExercise();
-    }
-    loadFocusModes();
+
 
     function parseNumbersClient(str) {
       if (!str) return [];
@@ -385,14 +379,14 @@
 
     // Mirrors getLoadRecord_ in Code.gs; isometric durations remain raw seconds.
     function getLoadRecordClient(repsStr, loadStr) {
-      function slots(value) {
+      function slots(value, signed) {
         if (value === null || value === undefined || value === '') return [];
         return value.toString().split(',').map(function (part) {
           var n = parseFloat(part.trim());
-          return isFinite(n) && n >= 0 ? n : null;
+          return isFinite(n) && (signed || n >= 0) ? n : null;
         });
       }
-      var reps = slots(repsStr), loads = slots(loadStr);
+      var reps = slots(repsStr, false), loads = slots(loadStr, true);
       var record = null;
       for (var i = 0; i < Math.max(reps.length, loads.length); i++) {
         var load = loads.length ? loads[Math.min(i, loads.length - 1)] : null;
@@ -506,7 +500,7 @@
 
       var canonical = findCanonicalExercise(exerciseTyped);
       var prior = canonical ? maxEst1RMByExercise[canonical] : undefined;
-      if (!prior || (prior.epley <= 0 && prior.brzycki <= 0)) {
+      if (!prior || prior.bodyweight || (prior.epley <= 0 && prior.brzycki <= 0)) {
         hintEl.style.display = 'none'; // no history yet — nothing to compare against
         return;
       }
@@ -559,16 +553,48 @@
       });
     }
 
-    // Load previously-used exercise + focus values for autocomplete
-    google.script.run
-      .withSuccessHandler(function (list) {
-        exerciseOptions = list || [];
-        renderDatalist('exercise-datalist', exerciseOptions);
-      })
-      .withFailureHandler(function (err) {
-        console.error('Could not load exercise list:', err.message);
-      })
-      .getExistingExercises();
+    function loadExerciseCatalog() {
+      google.script.run
+        .withSuccessHandler(function (result) {
+          exerciseCatalog = result.exercises || [];
+          suggestionMaxAgeDays = result.maxAgeDays;
+          exerciseOptions = exerciseCatalog.map(function (entry) { return entry.exercise; });
+          focusModeByExercise = {};
+          exerciseCatalog.forEach(function (entry) {
+            focusModeByExercise[entry.exercise] = entry.focuses.join(',');
+            entry.focuses.forEach(function (focus) {
+              if (FOCUS_GROUPS.indexOf(focus) === -1) FOCUS_GROUPS.push(focus);
+            });
+          });
+          document.querySelectorAll('.exercise-card').forEach(function (card) {
+            var value = getFocusValue(card);
+            card.querySelector('.f-focus-select').innerHTML = buildFocusOptionsHtml();
+            setFocusValue(card, value);
+            refreshExerciseSuggestions(card);
+            updateAllHints(card);
+          });
+        })
+        .withFailureHandler(function (err) { console.error('Could not load exercise catalog:', err.message); })
+        .getExerciseCatalog();
+    }
+    loadExerciseCatalog();
+
+    function getExerciseSuggestions(focus) {
+      var selected = String(focus || '').split(',').map(function (part) { return part.trim().toLowerCase(); }).filter(Boolean);
+      var cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - suggestionMaxAgeDays);
+      return exerciseCatalog.filter(function (entry) {
+        var date = new Date(entry.lastLogged);
+        return !isNaN(date.getTime()) && date >= cutoff && (!selected.length || entry.focuses.some(function (group) {
+          return selected.indexOf(group.toLowerCase()) !== -1;
+        }));
+      }).map(function (entry) { return entry.exercise; });
+    }
+
+    function refreshExerciseSuggestions(card) {
+      renderDatalist(card.querySelector('datalist').id, getExerciseSuggestions(getFocusValue(card)));
+      card.querySelector('.suggestion-chip').style.display = 'none';
+    }
 
     function loadTemplateOptions() {
       google.script.run
@@ -606,15 +632,14 @@
     }
 
     // Finds a close-but-not-exact match to flag as "Did you mean?"
-    function findCloseMatch(typed) {
+    function findCloseMatch(typed, candidates) {
       if (!typed || typed.length < 3) return null;
+      if (findCanonicalExercise(typed)) return null; // exact match to any logged exercise
       var lower = typed.toLowerCase();
       var best = null;
       var bestDist = Infinity;
-      exerciseOptions.forEach(function (name) {
-        var nameLower = name.toLowerCase();
-        if (nameLower === lower) return; // exact match, no suggestion needed
-        var dist = levenshtein(lower, nameLower);
+      (candidates || recentExerciseOptions).forEach(function (name) {
+        var dist = levenshtein(lower, name.toLowerCase());
         if (dist < bestDist) { bestDist = dist; best = name; }
       });
       // Only suggest for small typos, scaled loosely to word length
@@ -652,12 +677,14 @@
           focusSelect: card.querySelector('.f-focus-select').value,
           focusOther: card.querySelector('.f-focus-other').value,
           notes: card.querySelector('.f-notes').value,
+          brand: card.querySelector('.f-brand').value,
           mode: mode,
           perSetRows: perSetRows
         });
       });
       return {
         date: document.getElementById('date').value,
+        bodyweight: document.getElementById('bodyweight').value,
         exercises: exercises,
         sessionStart: sessionStartTime.toISOString(),
         savedAt: new Date().toISOString()
@@ -666,8 +693,8 @@
 
     function saveDraft() {
       var draft = serializeDraft();
-      var hasContent = draft.exercises.some(function (ex) {
-        return ex.exercise || ex.sets || ex.reps || ex.load || ex.focusSelect || ex.focusOther || ex.notes;
+      var hasContent = !!draft.bodyweight || draft.exercises.some(function (ex) {
+        return ex.exercise || (ex.sets && String(ex.sets) !== '1') || ex.reps || ex.load || ex.focusSelect || ex.focusOther || ex.notes || ex.brand;
       });
       var json = hasContent ? JSON.stringify(draft) : '';
       google.script.run
@@ -693,6 +720,7 @@
 
     function restoreDraftFromObject(draft) {
       document.getElementById('date').value = draft.date || todayISO();
+      document.getElementById('bodyweight').value = draft.bodyweight || '';
       document.getElementById('exercise-list').innerHTML = '';
       exerciseCount = 0;
 
@@ -705,7 +733,7 @@
         addExerciseBlock({
           exercise: ex.exercise, sets: ex.sets, reps: ex.reps, load: ex.load,
           focus: ex.focusSelect === '__other__' ? ex.focusOther : ex.focusSelect,
-          notes: ex.notes
+          notes: ex.notes, brand: ex.brand
         });
         var card = document.getElementById('exercise-' + exerciseCount);
         if (ex.mode === 'perset') {
@@ -716,7 +744,7 @@
             addSetRow(card);
             var last = container.lastElementChild;
             last.querySelector('.set-reps').value = row.reps || '';
-            last.querySelector('.set-load').value = row.load || '';
+            last.querySelector('.set-load').value = row.load === undefined || row.load === null ? '' : row.load;
           });
           if (container.children.length === 0) addSetRow(card);
           card.querySelector('.f-sets').value = container.children.length;
@@ -757,7 +785,7 @@
     // navigation/reload. Not guaranteed to fire on mobile OS backgrounding —
     // the draft autosave above is the real protection for that case.
     window.addEventListener('beforeunload', function (e) {
-      var hasContent = Array.from(document.querySelectorAll('.f-exercise')).some(function (inp) {
+      var hasContent = !!document.getElementById('bodyweight').value || Array.from(document.querySelectorAll('.f-exercise')).some(function (inp) {
         return inp.value.trim() !== '';
       });
       if (hasContent) {
@@ -780,6 +808,7 @@
     function setFocusValue(card, value) {
       var select = card.querySelector('.f-focus-select');
       var other = card.querySelector('.f-focus-other');
+      value = String(value || '').split(',').map(function (part) { return part.trim().toLowerCase().replace(/\b\w/g, function (letter) { return letter.toUpperCase(); }); }).filter(Boolean).join(',');
       if (!value) {
         select.value = '';
         other.style.display = 'none';
@@ -795,6 +824,7 @@
         other.style.display = 'block';
         other.value = value;
       }
+      refreshExerciseSuggestions(card);
     }
 
     // Reads the effective Focus value from the dropdown/Other pair
@@ -814,8 +844,8 @@
       var setNum = container.children.length + 1;
       row.innerHTML =
         '<span class="set-label">Set ' + setNum + '</span>' +
-        '<input type="number" class="set-reps" placeholder="Reps">' +
-        '<input type="number" class="set-load" placeholder="Load kg">' +
+        '<input type="number" inputmode="numeric" min="1" step="1" class="set-reps" placeholder="Reps">' +
+        '<input type="text" inputmode="text" class="set-load" placeholder="Load kg">' +
         '<button type="button" class="set-remove-btn">×</button>';
       container.appendChild(row);
       if (card.dataset.mode === 'perset') {
@@ -858,10 +888,8 @@
       card.querySelectorAll('.set-row').forEach(function (row) {
         var r = row.querySelector('.set-reps').value.trim();
         var l = row.querySelector('.set-load').value.trim();
-        if (r !== '' || l !== '') {
-          reps.push(r !== '' ? r : '0');
-          loads.push(l !== '' ? l : '0');
-        }
+        reps.push(r);
+        loads.push(l);
       });
       return { reps: reps.join(','), load: loads.join(','), sets: reps.length };
     }
@@ -899,17 +927,20 @@
           '<span>Exercise ' + id + '</span>' +
           '<button type="button" class="remove-btn" onclick="removeExercise(' + id + ')">Remove</button>' +
         '</div>' +
+        '<label>Focus</label><select class="f-focus-select">' + buildFocusOptionsHtml() + '</select>' +
+        '<input type="text" class="f-focus-other" placeholder="Specify muscle group" style="display:none;margin-top:6px;">' +
         '<label>Exercise</label>' +
-        '<input type="text" class="f-exercise" list="exercise-datalist" placeholder="e.g. Back Squat" autocomplete="off">' +
+        '<input type="text" class="f-exercise" list="exercise-datalist-' + id + '" placeholder="e.g. Back Squat" autocomplete="off">' +
+        '<datalist id="exercise-datalist-' + id + '"></datalist>' +
         '<div class="suggestion-chip"></div>' +
+        '<label>Brand (optional)</label>' +
+        '<input type="text" class="f-brand" placeholder="e.g. Life Fitness or Matrix">' +
         '<div class="row-2">' +
-          '<div><label>Sets</label><input type="number" class="f-sets" min="0"></div>' +
-          '<div class="field-reps"><label class="reps-label">Reps</label><input type="text" class="f-reps" placeholder="e.g. 8 or 8,6,6"></div>' +
+          '<div><label>Sets</label><input type="number" inputmode="numeric" class="f-sets" min="1" step="1" value="1"></div>' +
+          '<div class="field-reps"><label class="reps-label">Reps</label><input type="text" inputmode="numeric" class="f-reps" placeholder="e.g. 8 or 8,6,6"></div>' +
         '</div>' +
         '<div class="row-2">' +
           '<div class="field-load"><label>Load (kg)</label><input type="text" class="f-load" placeholder="e.g. 60 or 60,65,65"></div>' +
-          '<div><label>Focus</label><select class="f-focus-select">' + buildFocusOptionsHtml() + '</select>' +
-            '<input type="text" class="f-focus-other" placeholder="Specify muscle group" style="display:none;margin-top:6px;"></div>' +
         '</div>' +
         '<div class="pr-hint"></div><div class="est1rm-hint"></div>' +
         '<div class="toggle-per-set"><a class="toggle-per-set-link">+ Enter sets individually (pyramid, etc.)</a></div>' +
@@ -926,10 +957,11 @@
 
       if (prefill) {
         card.querySelector('.f-exercise').value = prefill.exercise || '';
-        card.querySelector('.f-sets').value = prefill.sets || '';
+        card.querySelector('.f-sets').value = prefill.sets === undefined || prefill.sets === null ? '1' : prefill.sets;
         card.querySelector('.f-reps').value = prefill.reps || '';
-        card.querySelector('.f-load').value = prefill.load || '';
+        card.querySelector('.f-load').value = prefill.load === undefined || prefill.load === null ? '' : prefill.load;
         card.querySelector('.f-notes').value = prefill.notes || '';
+        card.querySelector('.f-brand').value = prefill.brand || '';
         setFocusValue(card, prefill.focus || '');
       }
 
@@ -956,6 +988,9 @@
         }
       });
 
+      focusSelect.addEventListener('change', function () { refreshExerciseSuggestions(card); scheduleDraftSave(); });
+      focusOther.addEventListener('input', function () { refreshExerciseSuggestions(card); scheduleDraftSave(); });
+      refreshExerciseSuggestions(card);
       var setsInput = card.querySelector('.f-sets');
 
       addSetRow(card); // always keep one row ready in case the user switches modes
@@ -1022,7 +1057,7 @@
       });
 
       exerciseInput.addEventListener('blur', function () {
-        var match = findCloseMatch(exerciseInput.value.trim());
+        var match = findCloseMatch(exerciseInput.value.trim(), getExerciseSuggestions(getFocusValue(card)));
         if (match) {
           chip.textContent = 'Did you mean "' + match + '"?';
           chip.style.display = 'block';
@@ -1060,6 +1095,32 @@
 
     // Reads all exercise cards currently on screen into plain objects.
     // Shared by both "Save Session" and "Save as Template".
+    function validateWorkoutExercise(ex) {
+      var label = String(ex.exercise || 'Exercise').trim();
+      var sets = String(ex.sets === undefined || ex.sets === null ? '' : ex.sets).trim();
+      if (!/^\d+$/.test(sets) || !isFinite(Number(sets)) || Number(sets) < 1) {
+        return label + ': sets must be a whole number of at least 1.';
+      }
+      var reps = String(ex.reps === undefined || ex.reps === null ? '' : ex.reps).split(',');
+      for (var i = 0; i < reps.length; i++) {
+        var r = reps[i];
+        if (!/^\d+$/.test(r.trim()) || !isFinite(Number(r)) || Number(r) < 1) {
+          return label + ', set ' + (i + 1) + ': enter reps (or hold seconds) of at least 1.';
+        }
+      }
+      var loads = String(ex.load === undefined || ex.load === null ? '' : ex.load).split(',');
+      for (var j = 0; j < loads.length; j++) {
+        var l = loads[j];
+        if (!/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/.test(l.trim()) || !isFinite(Number(l))) {
+          return label + ', set ' + (j + 1) + ': enter a numeric load (0 for no added weight, negative for assistance).';
+        }
+      }
+      if ((reps.length !== 1 && reps.length !== Number(sets)) || (loads.length !== 1 && loads.length !== Number(sets))) {
+        return label + ': reps and loads must each contain one value or exactly ' + sets + ' values. Use a decimal point for loads; commas separate sets.';
+      }
+      return '';
+    }
+
     function collectExercises() {
       var exercises = [];
       document.querySelectorAll('.exercise-card').forEach(function (card) {
@@ -1072,7 +1133,8 @@
           reps: vals.reps,
           load: vals.load,
           focus: getFocusValue(card),
-          notes: card.querySelector('.f-notes').value.trim()
+          notes: card.querySelector('.f-notes').value.trim(),
+          brand: card.querySelector('.f-brand').value.trim()
         });
       });
       return exercises;
@@ -1163,6 +1225,23 @@
         return;
       }
 
+      for (var i = 0; i < exercises.length; i++) {
+        var validationError = validateWorkoutExercise(exercises[i]);
+        if (validationError) {
+          statusEl.textContent = validationError;
+          statusEl.className = 'error';
+          return;
+        }
+      }
+
+      var bwRaw = document.getElementById('bodyweight').value.trim().replace(',', '.');
+      if (bwRaw !== '' && (!/^\d+(?:\.\d{1,2})?$/.test(bwRaw) || !isFinite(Number(bwRaw)) || Number(bwRaw) <= 0)) {
+        statusEl.textContent = 'Bodyweight must be a positive number in kg with at most 2 decimal places.';
+        statusEl.className = 'error';
+        document.getElementById('bodyweight').focus();
+        return;
+      }
+
       var btn = document.getElementById('submit-btn');
       btn.disabled = true;
       btn.textContent = 'Saving...';
@@ -1181,24 +1260,17 @@
           btn.disabled = false;
           btn.textContent = 'Save Session';
 
-          // Fold any newly-typed exercise names into the autocomplete list
-          exercises.forEach(function (ex) {
-            if (ex.exercise && exerciseOptions.indexOf(ex.exercise) === -1) {
-              exerciseOptions.push(ex.exercise);
-            }
-          });
-          exerciseOptions.sort();
-          renderDatalist('exercise-datalist', exerciseOptions);
+          loadExerciseCatalog();
           loadMaxLoads();
           loadMax1RMs();
           loadFocusGaps();
-          loadFocusModes();
           clearDraft();
           document.getElementById('exercise-list').innerHTML = '';
           exerciseCount = 0;
           addExerciseBlock();
           document.getElementById('date').value = todayISO();
           sessionStartTime = new Date();
+          document.getElementById('bodyweight').value = '';
         })
         .withFailureHandler(function (err) {
           statusEl.textContent = 'Error: ' + err.message;
@@ -1206,7 +1278,7 @@
           btn.disabled = false;
           btn.textContent = 'Save Session';
         })
-        .submitSession({ date: date, exercises: exercises, sessionStart: sessionStartTime.toISOString() });
+        .submitSession({ date: date, exercises: exercises, sessionStart: sessionStartTime.toISOString(), bodyweight: bwRaw });
     });
   </script>
 </body>

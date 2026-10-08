@@ -19,6 +19,10 @@ var EXERCISE_MIN_VOLUME_KG = 300;
 // volume accumulates over time instead of growing indefinitely.
 var EXERCISE_CHART_MAX_COUNT = 15;
 
+// Exercises not logged within this many days are left out of the app's
+// autocomplete and "Did you mean?" suggestions. They still work if typed in full.
+var EXERCISE_SUGGESTION_MAX_AGE_DAYS = 30;
+
 // One-time historical import: list any old tabs with the same
 // Date/Exercise/Sets/Reps/Load/Focus/Notes structure here.
 var IMPORT_SOURCE_SHEETS = []; // Optional: add your own historical sheet names.
@@ -31,8 +35,13 @@ var DIGEST_RECIPIENT_EMAIL = null;
 // (same EXERCISE_MIN_SESSIONS/EXERCISE_MIN_VOLUME_KG threshold above) and its
 // all-time best load hasn't been beaten in this many sessions since.
 var PLATEAU_LOOKBACK_SESSIONS = 4;
+var BODYWEIGHT_SHEET_NAME = 'Bodyweight';
+var EXERCISE_SETTINGS_SHEET_NAME = 'ExerciseSettings';
+var BODYWEIGHT_SMOOTHING_N = 5;
+var BODYWEIGHT_EXERCISES = [];
 
 function doGet() {
+  setupBrandSupport();
   return HtmlService.createHtmlOutputFromFile('Index')
     .setTitle("Fitness Journal")
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
@@ -45,6 +54,7 @@ function onOpen() {
     .addItem('Rebuild Dashboard', 'updateDashboard_')
     .addItem('Import Historical Data (one-time)', 'importHistoricalData')
     .addItem('Merge Exercise Names...', 'mergeExerciseNames')
+    .addItem('Set Up Brand Columns', 'setupBrandSupport')
     .addSeparator()
     .addItem('Set Up Weekly Digest (Monday mornings)', 'setUpWeeklyDigestTrigger')
     .addItem('Send Weekly Digest Now (test)', 'sendWeeklyDigest')
@@ -56,7 +66,7 @@ function onOpen() {
  * {
  *   date: "2026-08-12",
  *   exercises: [
- *     { exercise, sets, reps, load, focus, notes },
+ *     { exercise, sets, reps, load, focus, notes, brand },
  *     ...
  *   ]
  * }
@@ -73,7 +83,12 @@ function submitSession(payload) {
 
   if (!date) throw new Error('Date is required.');
   if (exercises.length === 0) throw new Error('Add at least one exercise.');
+  exercises.forEach(function (ex) {
+    var error = validateWorkoutExercise_(ex);
+    if (error) throw new Error(error);
+  });
 
+  var bodyweight = parseBodyweight_(payload.bodyweight);
   var knownExercises = getExistingExercises();
   var priorRecords = getPRRecords();
 
@@ -83,14 +98,21 @@ function submitSession(payload) {
       normalizeExercise_(ex.exercise || '', knownExercises),
       ex.sets || '',
       ex.reps || '',
-      ex.load || '',
-      ex.focus || '',
-      ex.notes || ''
+      ex.load === undefined || ex.load === null ? '' : ex.load,
+      normalizeFocus_(ex.focus),
+      ex.notes || '',
+      String(ex.brand || '').trim()
     ];
   });
 
+  // Check canonical names before any writes; unrelated malformed settings
+  // must not prevent an otherwise valid workout from being recorded.
+  assertNoNegativeSettingConflicts_(rows);
+  ensureBrandColumn_(sheet);
+  // Surface weigh-in failures before appending the workout, so retries do not duplicate it.
+  if (bodyweight !== null) saveBodyweight_(date, bodyweight);
   var startRow = sheet.getLastRow() + 1;
-  sheet.getRange(startRow, 1, rows.length, 7).setValues(rows);
+  sheet.getRange(startRow, 1, rows.length, 8).setValues(rows);
 
   // Compare the best set across all cards for each exercise with saved history.
   var sessionRecords = {};
@@ -131,6 +153,32 @@ function submitSession(payload) {
  * client can show a live PR indicator while filling in the Load field,
  * before the session is even saved.
  */
+function validateWorkoutExercise_(ex) {
+  var label = String(ex.exercise || 'Exercise').trim();
+  var sets = String(ex.sets === undefined || ex.sets === null ? '' : ex.sets).trim();
+  if (!/^\d+$/.test(sets) || !isFinite(Number(sets)) || Number(sets) < 1) {
+    return label + ': sets must be a whole number of at least 1.';
+  }
+  var reps = String(ex.reps === undefined || ex.reps === null ? '' : ex.reps).split(',');
+  for (var i = 0; i < reps.length; i++) {
+    var r = reps[i];
+    if (!/^\d+$/.test(r.trim()) || !isFinite(Number(r)) || Number(r) < 1) {
+      return label + ', set ' + (i + 1) + ': enter reps (or hold seconds) of at least 1.';
+    }
+  }
+  var loads = String(ex.load === undefined || ex.load === null ? '' : ex.load).split(',');
+  for (var j = 0; j < loads.length; j++) {
+    var l = loads[j];
+    if (!/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/.test(l.trim()) || !isFinite(Number(l))) {
+      return label + ', set ' + (j + 1) + ': enter a numeric load (0 for no added weight, negative for assistance).';
+    }
+  }
+  if ((reps.length !== 1 && reps.length !== Number(sets)) || (loads.length !== 1 && loads.length !== Number(sets))) {
+    return label + ': reps and loads must each contain one value or exactly ' + sets + ' values. Use a decimal point for loads; commas separate sets.';
+  }
+  return '';
+}
+
 function getMaxLoads() {
   return getMaxLoadByExercise_();
 }
@@ -138,14 +186,14 @@ function getMaxLoads() {
 // Raw reps are seconds for isometrics here; do not apply the 1RM/volume conversion.
 // Keep invalid/missing slots in place so a later rep count cannot shift to another load.
 function getLoadRecord_(repsStr, loadStr) {
-  function slots(value) {
+  function slots(value, signed) {
     if (value === null || value === undefined || value === '') return [];
     return value.toString().split(',').map(function (part) {
       var n = parseFloat(part.trim());
-      return isFinite(n) && n >= 0 ? n : null;
+      return isFinite(n) && (signed || n >= 0) ? n : null;
     });
   }
-  var reps = slots(repsStr), loads = slots(loadStr);
+  var reps = slots(repsStr, false), loads = slots(loadStr, true);
   var record = null;
   for (var i = 0; i < Math.max(reps.length, loads.length); i++) {
     var load = loads.length ? loads[Math.min(i, loads.length - 1)] : null;
@@ -250,8 +298,72 @@ function getMaxLoadByExercise_() {
 
 /**
  * Returns a sorted list of unique exercise names already logged,
- * used to power autocomplete in the form.
+ * used for canonical matching and other all-time exercise lookups.
  */
+function normalizeFocus_(value) {
+  var seen = Object.create(null);
+  return String(value || '').split(',').map(function (part) {
+    return part.trim().toLowerCase().replace(/\b\w/g, function (letter) { return letter.toUpperCase(); });
+  }).filter(function (part) {
+    if (!part || seen[part]) return false;
+    seen[part] = true;
+    return true;
+  }).join(',');
+}
+
+// Complete exercise catalog, independent of chart thresholds and rolling windows.
+function buildExerciseCatalog_(data) {
+  var byName = Object.create(null);
+  data.forEach(function (row) {
+    var name = String(row[1] || '').trim();
+    if (!name) return;
+    var key = name.toLowerCase();
+    if (!byName[key]) byName[key] = { exercise: name, focuses: [], lastLogged: '' };
+    var entry = byName[key];
+    normalizeFocus_(row[5]).split(',').forEach(function (focus) {
+      if (focus && entry.focuses.indexOf(focus) === -1) entry.focuses.push(focus);
+    });
+    var date = toDateObj_(row[0]);
+    if (date && !isNaN(date.getTime())) {
+      var iso = date.toISOString();
+      if (iso > entry.lastLogged) entry.lastLogged = iso;
+    }
+  });
+  return Object.keys(byName).map(function (key) {
+    byName[key].focuses.sort();
+    return byName[key];
+  }).sort(function (a, b) { return a.exercise.localeCompare(b.exercise); });
+}
+
+function getExerciseCatalog() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var dashboard = ss.getSheetByName(DASHBOARD_SHEET_NAME);
+  function readSummary() {
+    if (!dashboard || dashboard.getLastRow() < 2) return null;
+    var values = dashboard.getRange(1, 1, dashboard.getLastRow(), 14).getValues();
+    for (var i = 0; i < values.length; i++) {
+      if (values[i][0] !== 'Exercise' || values[i][1] !== 'Times Performed') continue;
+      if (values[i][13] !== 'Focus') return null;
+      var entries = [];
+      for (var j = i + 1; j < values.length && values[j][0]; j++) {
+        var row = values[j];
+        var date = toDateObj_(row[9]);
+        entries.push({ exercise: String(row[0]), focuses: normalizeFocus_(row[13]).split(',').filter(Boolean), lastLogged: date ? date.toISOString() : '' });
+      }
+      return entries;
+    }
+    return null;
+  }
+  var entries = readSummary();
+  // One-time upgrade of an existing summary missing its Focus column.
+  if (entries === null) {
+    updateDashboard_();
+    dashboard = ss.getSheetByName(DASHBOARD_SHEET_NAME);
+    entries = readSummary();
+  }
+  return { exercises: entries || [], maxAgeDays: EXERCISE_SUGGESTION_MAX_AGE_DAYS };
+}
+
 function getExistingExercises() {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
   if (!sheet || sheet.getLastRow() < 2) return [];
@@ -261,6 +373,31 @@ function getExistingExercises() {
   values.forEach(function (row) {
     var name = (row[0] || '').toString().trim();
     if (name) seen[name] = true;
+  });
+
+  return Object.keys(seen).sort(function (a, b) {
+    return a.localeCompare(b);
+  });
+}
+
+/**
+ * Like getExistingExercises(), but only exercises logged within the last
+ * EXERCISE_SUGGESTION_MAX_AGE_DAYS days. Used for suggestions only.
+ */
+function getRecentExercises() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+
+  var cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - EXERCISE_SUGGESTION_MAX_AGE_DAYS);
+
+  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues(); // A:B = Date, Exercise
+  var seen = {};
+  values.forEach(function (row) {
+    var dateObj = toDateObj_(row[0]);
+    var name = (row[1] || '').toString().trim();
+    if (!dateObj || !name || dateObj < cutoff) return;
+    seen[name] = true;
   });
 
   return Object.keys(seen).sort(function (a, b) {
@@ -387,7 +524,7 @@ function computeWorkoutDensity_(tz) {
   if (!sessionsSheet || sessionsSheet.getLastRow() < 2 || !source || source.getLastRow() < 2) return [];
 
   // Volume per date, from the main log
-  var data = source.getRange(2, 1, source.getLastRow() - 1, 7).getValues();
+  var data = applyBodyweightToData_(source.getRange(2, 1, source.getLastRow() - 1, 7).getValues(), tz);
   var volumeByDate = {};
   data.forEach(function (row) {
     var dateObj = toDateObj_(row[0]);
@@ -420,6 +557,27 @@ function computeWorkoutDensity_(tz) {
 
 // --- Session Templates ---------------------------------------------------
 
+// Schema setup only: never renames exercises or extracts brands from history.
+function ensureBrandColumn_(sheet) {
+  var maxColumns = sheet.getMaxColumns();
+  if (maxColumns < 8) sheet.insertColumnsAfter(maxColumns, 8 - maxColumns);
+  var header = String(sheet.getRange(1, 8, 1, 1).getValues()[0][0] || '').trim();
+  if (header === 'Brand') return;
+  var values = sheet.getRange(1, 8, Math.max(1, sheet.getLastRow()), 1).getValues();
+  if (values.some(function (row) { return row[0] !== '' && row[0] !== undefined && row[0] !== null; })) {
+    throw new Error('Column H in "' + sheet.getName() + '" already contains data. Reserve column H for Brand before setting up Brand support.');
+  }
+  sheet.getRange(1, 8, 1, 1).setValues([['Brand']]);
+}
+
+function setupBrandSupport() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
+  if (!sheet) throw new Error('Sheet tab "' + SHEET_NAME + '" not found.');
+  ensureBrandColumn_(sheet);
+  getTemplatesSheet_();
+  return { success: true };
+}
+
 function getTemplatesSheet_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(TEMPLATES_SHEET_NAME);
@@ -430,6 +588,7 @@ function getTemplatesSheet_() {
       .setFontWeight('bold');
     sheet.setFrozenRows(1);
   }
+  ensureBrandColumn_(sheet);
   return sheet;
 }
 
@@ -452,7 +611,7 @@ function getTemplateExercises(templateName) {
   var sheet = getTemplatesSheet_();
   if (sheet.getLastRow() < 2) return [];
 
-  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 7).getValues();
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 8).getValues();
   var result = [];
   data.forEach(function (row) {
     if ((row[0] || '').toString().trim() === templateName) {
@@ -460,9 +619,10 @@ function getTemplateExercises(templateName) {
         exercise: row[1] || '',
         sets: row[2] || '',
         reps: row[3] || '',
-        load: row[4] || '',
+        load: row[4] === undefined || row[4] === null ? '' : row[4],
         focus: row[5] || '',
-        notes: row[6] || ''
+        notes: row[6] || '',
+        brand: row[7] || ''
       });
     }
   });
@@ -496,14 +656,15 @@ function saveTemplate(templateName, exercises) {
       ex.exercise || '',
       ex.sets || '',
       ex.reps || '',
-      ex.load || '',
-      ex.focus || '',
-      ex.notes || ''
+      ex.load === undefined || ex.load === null ? '' : ex.load,
+      normalizeFocus_(ex.focus),
+      ex.notes || '',
+      String(ex.brand || '').trim()
     ];
   });
 
   var startRow = sheet.getLastRow() + 1;
-  sheet.getRange(startRow, 1, rows.length, 7).setValues(rows);
+  sheet.getRange(startRow, 1, rows.length, 8).setValues(rows);
 
   return { success: true };
 }
@@ -568,6 +729,12 @@ function mergeExerciseNames() {
   );
   if (confirm !== ui.Button.YES) return;
 
+  try {
+    mergeExerciseSettings_(fromName, toName, sheet.getRange(2, 1, sheet.getLastRow() - 1, 7).getValues());
+  } catch (e) {
+    ui.alert('Merge cancelled: ' + e.message);
+    return;
+  }
   var logUpdated = renameExerciseInSheet_(sheet, fromName, toName, 2);
 
   var templatesUpdated = 0;
@@ -633,11 +800,13 @@ function importHistoricalData() {
     return;
   }
 
+  ensureBrandColumn_(target);
+
   // Build a set of existing rows (as composite keys) to avoid double-importing
   var existingKeys = {};
   var knownExercises = getExistingExercises();
   if (target.getLastRow() >= 2) {
-    var existingData = target.getRange(2, 1, target.getLastRow() - 1, 7).getValues();
+    var existingData = target.getRange(2, 1, target.getLastRow() - 1, 8).getValues();
     existingData.forEach(function (row) {
       existingKeys[rowKey_(row)] = true;
     });
@@ -657,7 +826,8 @@ function importHistoricalData() {
       return;
     }
 
-    var data = source.getRange(2, 1, source.getLastRow() - 1, 7).getValues();
+    var hasBrand = source.getMaxColumns() >= 8 && String(source.getRange(1, 8, 1, 1).getValues()[0][0] || '').trim() === 'Brand';
+    var data = source.getRange(2, 1, source.getLastRow() - 1, hasBrand ? 8 : 7).getValues();
     var imported = 0;
     var skippedDupes = 0;
     var skippedBlank = 0;
@@ -681,9 +851,10 @@ function importHistoricalData() {
         normalizedExercise,
         row[2] || '',
         row[3] || '',
-        row[4] || '',
-        row[5] || '',
-        row[6] || ''
+        row[4] === undefined || row[4] === null ? '' : row[4],
+        normalizeFocus_(row[5]),
+        row[6] || '',
+        hasBrand ? String(row[7] || '').trim() : ''
       ];
 
       var key = rowKey_(newRow);
@@ -699,7 +870,7 @@ function importHistoricalData() {
 
   if (allNewRows.length > 0) {
     var startRow = target.getLastRow() + 1;
-    target.getRange(startRow, 1, allNewRows.length, 7).setValues(allNewRows);
+    target.getRange(startRow, 1, allNewRows.length, 8).setValues(allNewRows);
     updateDashboard_();
   }
 
@@ -718,14 +889,257 @@ function rowKey_(row) {
     (row[2] || '').toString().trim(),
     (row[3] || '').toString().trim(),
     (row[4] || '').toString().trim(),
-    (row[5] || '').toString().trim().toLowerCase(),
-    (row[6] || '').toString().trim().toLowerCase()
+    normalizeFocus_(row[5]).toLowerCase(),
+    (row[6] || '').toString().trim().toLowerCase(),
+    (row[7] || '').toString().trim().toLowerCase()
   ].join('|');
 }
 
 // --- Dashboard ---------------------------------------------------------
 
 // Parses "8" or "8,6,6" into [8] or [8,6,6]
+// --- Bodyweight & assisted exercises ---------------------------------------
+
+function getBodyweightSheet_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(BODYWEIGHT_SHEET_NAME);
+  if (!sheet) {
+    sheet = ss.insertSheet(BODYWEIGHT_SHEET_NAME);
+    sheet.getRange(1, 1, 1, 2).setValues([['Date', 'Bodyweight (kg)']]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+// Cell -> 'yyyy-MM-dd' string, whether Sheets stored it as a Date or as text.
+// Kept as strings end-to-end: new Date('yyyy-MM-dd') parses as UTC and can
+// land on the previous day in negative-offset timezones.
+function cellDateKey_(value, tz) {
+  if (value instanceof Date) return Utilities.formatDate(value, tz, 'yyyy-MM-dd');
+  return (value || '').toString().trim();
+}
+
+// One row per date: overwrites if that date already has a weigh-in.
+function saveBodyweight_(dateKey, kgRaw) {
+  var kg = parseBodyweight_(kgRaw);
+  if (kg === null) return;
+
+  var tz = Session.getScriptTimeZone();
+  var sheet = getBodyweightSheet_();
+
+  if (sheet.getLastRow() >= 2) {
+    var keys = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
+    for (var i = 0; i < keys.length; i++) {
+      if (cellDateKey_(keys[i][0], tz) === dateKey) {
+        sheet.getRange(i + 2, 2).setValue(kg);
+        return;
+      }
+    }
+  }
+  var row = sheet.getLastRow() + 1;
+  sheet.getRange(row, 1).setNumberFormat('@').setValue(dateKey); // plain text, no auto-date
+  sheet.getRange(row, 2).setValue(kg);
+}
+
+// Returns [{ key: 'yyyy-MM-dd', kg }] sorted chronologically
+function getBodyweightSeries_(tz) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(BODYWEIGHT_SHEET_NAME);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues();
+  var series = [];
+  rows.forEach(function (r) {
+    var key = cellDateKey_(r[0], tz);
+    var kg = parseFloat(r[1]);
+    if (key && !isNaN(kg) && kg > 0) series.push({ key: key, kg: kg });
+  });
+  return series.sort(function (a, b) { return a.key.localeCompare(b.key); });
+}
+
+// Smoothed bodyweight for a date: average of the last N weigh-ins on or
+// before it. If the date predates every weigh-in, falls back to the earliest
+// one. Returns null only if there are no weigh-ins at all.
+function bodyweightFor_(series, dateKey) {
+  if (series.length === 0) return null;
+  var upTo = series.filter(function (s) { return s.key <= dateKey; });
+  if (upTo.length === 0) return series[0].kg;
+  var recent = upTo.slice(-BODYWEIGHT_SMOOTHING_N);
+  var sum = recent.reduce(function (a, s) { return a + s.kg; }, 0);
+  return Math.round((sum / recent.length) * 10) / 10;
+}
+
+// Exercises whose Load is relative to bodyweight: any name with at least one
+// negative load logged, plus the manual list above.
+// Read only relevant rows when names are supplied, so unrelated setting errors
+// do not block daily workout submissions. Reporting still validates all rows.
+function readExerciseSettings_(names) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(EXERCISE_SETTINGS_SHEET_NAME);
+  var settings = Object.create(null);
+  if (!sheet || sheet.getLastRow() < 2) return settings;
+  sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues().forEach(function (row, i) {
+    var name = String(row[0] || '').trim(), key = name.toLowerCase();
+    if (!name || (names && names.indexOf(key) === -1)) return;
+    var value = String(row[1]).trim().toUpperCase();
+    if (value !== 'TRUE' && value !== 'FALSE') throw new Error('ExerciseSettings: Bodyweight for "' + name + '" must be TRUE or FALSE.');
+    if (key in settings) throw new Error('ExerciseSettings: duplicate exercise "' + name + '".');
+    settings[key] = { name: name, bodyweight: value === 'TRUE', row: i + 2 };
+  });
+  return settings;
+}
+
+function assertNoNegativeSettingConflicts_(data) {
+  var negative = data.filter(function (row) { return parseNumbers_(row[4]).some(function (l) { return l < 0; }); });
+  if (!negative.length) return;
+  var settings = readExerciseSettings_(negative.map(function (row) { return String(row[1] || '').trim().toLowerCase(); }));
+  negative.forEach(function (row) {
+    var name = String(row[1] || '').trim(), setting = settings[name.toLowerCase()];
+    if (setting && !setting.bodyweight) {
+      throw new Error('ExerciseSettings: "' + name + '" has Bodyweight = FALSE but a negative load. Correct the load or set Bodyweight to TRUE.');
+    }
+  });
+}
+
+// Reconcile settings before renaming workout/template rows. Conflicting values
+// require an explicit sheet correction instead of silently choosing a winner.
+function mergeExerciseSettings_(fromName, toName, history) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    var fromKey = fromName.trim().toLowerCase(), toKey = toName.trim().toLowerCase();
+    var relevant = history.filter(function (row) {
+      var key = String(row[1] || '').trim().toLowerCase();
+      return key === fromKey || key === toKey;
+    });
+    assertNoNegativeSettingConflicts_(relevant);
+    var settings = readExerciseSettings_([fromKey, toKey]);
+    var from = settings[fromKey], to = settings[toKey];
+    function classification(key, setting) {
+      if (setting) return setting.bodyweight;
+      if (BODYWEIGHT_EXERCISES.some(function (n) { return String(n).trim().toLowerCase() === key; }) ||
+          relevant.some(function (row) { return String(row[1] || '').trim().toLowerCase() === key && parseNumbers_(row[4]).some(function (l) { return l < 0; }); })) return true;
+      return undefined;
+    }
+    var fromValue = classification(fromKey, from), toValue = classification(toKey, to);
+    if (fromValue !== undefined && toValue !== undefined && fromValue !== toValue) {
+      throw new Error('ExerciseSettings: "' + fromName + '" and "' + toName + '" have conflicting Bodyweight values. Align their settings before merging.');
+    }
+    var value = toValue !== undefined ? toValue : fromValue;
+    if (value === undefined) return;
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName(EXERCISE_SETTINGS_SHEET_NAME);
+    if (!sheet) {
+      sheet = ss.insertSheet(EXERCISE_SETTINGS_SHEET_NAME);
+      sheet.getRange(1, 1, 1, 2).setValues([['Exercise', 'Bodyweight']]).setFontWeight('bold');
+      sheet.setFrozenRows(1);
+    }
+    var targetRow = to ? to.row : (from ? from.row : sheet.getLastRow() + 1);
+    sheet.getRange(targetRow, 1, 1, 2).setValues([[toName, value]]);
+    if (from && to && from.row !== to.row) sheet.deleteRow(from.row);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function findBodyweightExercises_(data) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    return resolveBodyweightExercises_(data);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Persist detected classifications. An explicit FALSE always overrides inference.
+function resolveBodyweightExercises_(data) {
+  // Historical conflicts must not silently turn into negative reporting volume.
+  assertNoNegativeSettingConflicts_(data);
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(EXERCISE_SETTINGS_SHEET_NAME);
+  if (!sheet) {
+    sheet = ss.insertSheet(EXERCISE_SETTINGS_SHEET_NAME);
+    sheet.getRange(1, 1, 1, 2).setValues([['Exercise', 'Bodyweight']]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+  }
+  var settings = Object.create(null);
+  var rows = sheet.getLastRow() > 1 ? sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues() : [];
+  rows.forEach(function (row) {
+    var name = String(row[0] || '').trim();
+    if (!name) return;
+    var value = String(row[1]).trim().toUpperCase();
+    if (value !== 'TRUE' && value !== 'FALSE') {
+      throw new Error('ExerciseSettings: Bodyweight for "' + name + '" must be TRUE or FALSE.');
+    }
+    var key = name.toLowerCase();
+    if (key in settings) throw new Error('ExerciseSettings: duplicate exercise "' + name + '".');
+    settings[key] = { name: name, bodyweight: value === 'TRUE' };
+  });
+  var additions = [];
+  function register(name) {
+    name = String(name || '').trim();
+    var key = name.toLowerCase();
+    if (!name || key in settings) return;
+    settings[key] = { name: name, bodyweight: true };
+    additions.push([name, true]);
+  }
+  BODYWEIGHT_EXERCISES.forEach(register);
+  data.forEach(function (row) {
+    if (parseNumbers_(row[4]).some(function (l) { return l < 0; })) register(row[1]);
+  });
+  if (additions.length) sheet.getRange(sheet.getLastRow() + 1, 1, additions.length, 2).setValues(additions);
+  var set = Object.create(null);
+  Object.keys(settings).forEach(function (key) {
+    if (settings[key].bodyweight) set[settings[key].name] = true;
+  });
+  data.forEach(function (row) {
+    var name = (row[1] || '').toString().trim();
+    var setting = settings[name.toLowerCase()];
+    if (setting && setting.bodyweight) set[name] = true;
+  });
+  return set;
+}
+
+// Rewrites the Load column (index 4) of bodyweight exercises to EFFECTIVE
+// load = smoothed bodyweight + logged load, per set. Everything downstream
+// (volume, PRs, avg load, plateau, dashboard) then needs no changes.
+// Blank load on a bodyweight exercise counts as 0 (pure bodyweight).
+// With no weigh-ins at all, load is blanked (volume 0) rather than letting
+// negative numbers corrupt the totals.
+function applyBodyweightToData_(data, tz) {
+  var bwExercises = findBodyweightExercises_(data);
+  if (Object.keys(bwExercises).length === 0) return data;
+
+  var series = getBodyweightSeries_(tz);
+  var cache = {};
+
+  return data.map(function (row) {
+    var name = (row[1] || '').toString().trim();
+    if (!bwExercises[name]) return row;
+    var key = cellDateKey_(row[0], tz);
+    if (!key) return row;
+    if (!(key in cache)) cache[key] = bodyweightFor_(series, key);
+    var bw = cache[key];
+
+    var loads = parseNumbers_(row[4]);
+    if (loads.length === 0) loads = [0];
+
+    var out = row.slice();
+    out[4] = (bw === null)
+      ? ''
+      : loads.map(function (l) { return Math.round((bw + l) * 10) / 10; }).join(',');
+    return out;
+  });
+}
+
+function parseBodyweight_(value) {
+  var raw = value === null || value === undefined ? '' : String(value).trim();
+  if (raw === '') return null;
+  var normalized = raw.replace(',', '.');
+  if (!/^\d+(?:\.\d{1,2})?$/.test(normalized) || !isFinite(Number(normalized)) || Number(normalized) <= 0) {
+    throw new Error('Bodyweight must be a positive number in kg with at most 2 decimal places.');
+  }
+  return Number(normalized);
+}
+
 function parseNumbers_(str) {
   if (!str) return [];
   return str
@@ -778,6 +1192,9 @@ function computeVolume_(sets, reps, load, exerciseName) {
 function toDateObj_(value) {
   if (value instanceof Date) return value;
   if (!value) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(value))) {
+    return Utilities.parseDate(String(value) + ' 12:00', Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm');
+  }
   var parsed = new Date(value);
   return isNaN(parsed.getTime()) ? null : parsed;
 }
@@ -884,9 +1301,14 @@ function getMaxEstimated1RMs() {
   if (!sheet || sheet.getLastRow() < 2) return result;
 
   var data = sheet.getRange(2, 2, sheet.getLastRow() - 1, 4).getValues(); // B:E = Exercise, Sets, Reps, Load
+  var bodyweightExercises = findBodyweightExercises_(data.map(function (r) { return ['', r[0], r[1], r[2], r[3]]; }));
   data.forEach(function (row) {
     var name = (row[0] || '').toString().trim();
     if (!name) return;
+    if (bodyweightExercises[name]) {
+      result[name] = { epley: 0, brzycki: 0, bodyweight: true };
+      return;
+    }
     var est = computeBestEstimated1RM_(row[2], row[3], row[0]); // Reps, Load, Exercise
     if (!result[name]) result[name] = { epley: 0, brzycki: 0 };
     if (est.epley > result[name].epley) result[name].epley = est.epley;
@@ -896,12 +1318,13 @@ function getMaxEstimated1RMs() {
 }
 
 // Rolls granular Focus tags up into broader muscle groups for reporting
-// (dashboard charts + weekly digest only — the raw Focus value logged on
-// each row is never changed, this is purely an aggregation-time lookup).
+// (dashboard charts + weekly digest). This lookup does not replace logged
+// tags with broader groups; formatting normalization happens separately.
 //
 // For combo tags ("Quads & Glutes", "Chest & Triceps", "Lats, Delts",
 // "Back/Core"), only the FIRST-listed muscle determines the group — the
-// whole row's volume counts toward that group, nothing is split.
+// whole row's volume counts toward that group, nothing is split. Muscle
+// Group Gaps instead records every listed muscle group as trained.
 //
 // Matching is keyword/substring based (not exact-string) so typos, Spanish
 // terms, and descriptive variants ("Rear Delts", "Glúteos", "Isquios
@@ -910,6 +1333,7 @@ function getMaxEstimated1RMs() {
 // before matching. Anything that matches nothing keeps its own name as an
 // ungrouped bucket (e.g. "Stability" alone, if it ever appears first).
 var FOCUS_KEYWORD_GROUPS = [
+  ['legs', 'Legs'],
   ['glute', 'Glutes'],
   ['hamstring', 'Legs'],
   ['isquio', 'Legs'],
@@ -956,7 +1380,7 @@ function normalizeFocusGroup_(focus) {
     var group = classifyMuscleWord_(words[i]);
     if (group) return group;
   }
-  return trimmed; // unrecognized — keep as its own bucket under its original name
+  return firstSegment; // unrecognized — retain only the first group, not a combined label
 }
 
 // Sums volume per Focus GROUP within an optional date window (sinceKey inclusive, 'yyyy-MM-dd' or null for all-time)
@@ -992,10 +1416,14 @@ function computeFocusGaps_(data, tz, today) {
     if (!dateObj) return;
     var focusRaw = (row[5] || '').toString().trim();
     if (!focusRaw) return;
-    var focus = normalizeFocusGroup_(focusRaw);
-    if (!lastTrainedByFocus[focus] || dateObj > lastTrainedByFocus[focus]) {
-      lastTrainedByFocus[focus] = dateObj;
-    }
+    // Every muscle in a combined focus was trained, regardless of spacing.
+    focusRaw.split(/,|&|\/|\band\b/i).forEach(function (part) {
+      var focus = normalizeFocusGroup_(part);
+      if (!focus) return;
+      if (!lastTrainedByFocus[focus] || dateObj > lastTrainedByFocus[focus]) {
+        lastTrainedByFocus[focus] = dateObj;
+      }
+    });
   });
 
   return Object.keys(lastTrainedByFocus).map(function (focus) {
@@ -1170,8 +1598,18 @@ function updateDashboard_() {
   if (!source || source.getLastRow() < 2) return;
 
   var tz = Session.getScriptTimeZone();
-  var data = source.getRange(2, 1, source.getLastRow() - 1, 7).getValues();
+  var rawData = source.getRange(2, 1, source.getLastRow() - 1, 7).getValues();
+  var focusChanged = false;
+  rawData.forEach(function (row) {
+    var normalized = normalizeFocus_(row[5]);
+    if (normalized !== row[5]) focusChanged = true;
+    row[5] = normalized;
+  });
+  if (focusChanged) source.getRange(2, 6, rawData.length, 1).setValues(rawData.map(function (row) { return [row[5]]; }));
+  var data = applyBodyweightToData_(rawData, tz);
   // columns: Date, Exercise, Sets, Reps, Load, Focus, Notes
+  data.forEach(function (row) { row[5] = normalizeFocus_(row[5]); });
+  var exerciseCatalog = buildExerciseCatalog_(data);
 
   // Rolling windows, recalculated relative to today every time the dashboard rebuilds
   var today = new Date();
@@ -1279,7 +1717,7 @@ function updateDashboard_() {
     'First Reps (avg/set)', 'Last Reps (avg/set)', 'Rep Increase',
     'First Performed', 'Last Performed',
     'Est. 1RM — Epley (kg)', 'Est. 1RM — Brzycki (kg)',
-    'Most Common Set-Type'
+    'Most Common Set-Type', 'Focus'
   ];
   var summaryStartRow = dateRows.length + exerciseRows.length + 6; // clear of tables 1 & 2, whichever is longer
   var summaryRows = Object.keys(entriesByExercise).sort(function (a, b) { return a.localeCompare(b); }).map(function (exercise) {
@@ -1295,7 +1733,8 @@ function updateDashboard_() {
       first.reps, last.reps, Math.round((last.reps - first.reps) * 10) / 10,
       first.dateKey, last.dateKey,
       Math.round(bestEpley * 10) / 10, Math.round(bestBrzycki * 10) / 10,
-      modeSetType_(entries)
+      modeSetType_(entries),
+      exerciseCatalog.filter(function (entry) { return entry.exercise.toLowerCase() === exercise.toLowerCase(); })[0].focuses.join(',')
     ];
   });
   dashboard.getRange(summaryStartRow, 1, 1, summaryHeader.length).setValues([summaryHeader]).setFontWeight('bold');
@@ -1466,7 +1905,7 @@ function sendWeeklyDigest() {
   if (!source || source.getLastRow() < 2) return;
 
   var tz = Session.getScriptTimeZone();
-  var data = source.getRange(2, 1, source.getLastRow() - 1, 7).getValues();
+  var data = applyBodyweightToData_(source.getRange(2, 1, source.getLastRow() - 1, 7).getValues(), tz);
 
   var today = new Date();
   var weekStart = new Date(today); weekStart.setDate(weekStart.getDate() - 6);
@@ -1549,6 +1988,17 @@ function sendWeeklyDigest() {
   var overloadDelta = computeProgressiveOverloadDelta_(data, tz, weekStartKey, todayKey, prevWeekStartKey, prevWeekEndKey);
 
   // --- Workout Density: average this week, from the separate _Sessions tab ---
+  // --- Bodyweight: average this week vs last week ---
+  var bwSeries = getBodyweightSeries_(tz);
+  function avgBw_(arr) {
+    return arr.length > 0
+      ? Math.round((arr.reduce(function (s, x) { return s + x.kg; }, 0) / arr.length) * 10) / 10
+      : null;
+  }
+  var bwThisWeek = bwSeries.filter(function (s) { return s.key >= weekStartKey && s.key <= todayKey; });
+  var bwLastWeek = bwSeries.filter(function (s) { return s.key >= prevWeekStartKey && s.key <= prevWeekEndKey; });
+  var bwAvgNow = avgBw_(bwThisWeek), bwAvgPrev = avgBw_(bwLastWeek);
+
   var densityAll = computeWorkoutDensity_(tz);
   var densityThisWeek = densityAll.filter(function (d) { return d.dateKey >= weekStartKey && d.dateKey <= todayKey; });
   var avgDensityThisWeek = densityThisWeek.length > 0
@@ -1681,6 +2131,18 @@ function sendWeeklyDigest() {
     html += '</table>';
   } else {
     html += '<p>No exercises trained in both this week and last week — nothing to compare yet.</p>';
+  }
+
+  html += '<h3>Bodyweight</h3>';
+  if (bwAvgNow !== null) {
+    html += '<p>Average this week: <strong>' + bwAvgNow + 'kg</strong> (' + bwThisWeek.length + ' weigh-in' + (bwThisWeek.length === 1 ? '' : 's') + ')';
+    if (bwAvgPrev !== null) {
+      var bwDelta = Math.round((bwAvgNow - bwAvgPrev) * 10) / 10;
+      html += ' · last week ' + bwAvgPrev + 'kg (' + (bwDelta >= 0 ? '+' : '') + bwDelta + 'kg)';
+    }
+    html += '</p>';
+  } else {
+    html += '<p>No weigh-ins logged this week.</p>';
   }
 
   html += '<h3>Workout Density</h3>';

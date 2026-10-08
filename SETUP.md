@@ -113,3 +113,13 @@ This repository stores the source code. Pushing to GitHub does not automatically
 5. Reopen or refresh the web app on your phone. Updating the existing deployment preserves its URL, so your Home Screen shortcut continues to work.
 
 See Google's [deployment update guide](https://developers.google.com/apps-script/concepts/deployments).
+
+## Brand and Focus upgrade
+
+Copy both Code.gs and Index.html to Apps Script and update the existing deployment to a new version. Opening the app adds Brand in column H of StrengthWorkoutINPUT and Templates, or reopen the spreadsheet and choose Fitness Journal > Set Up Brand Columns. Existing data in an unlabelled or differently labelled column H blocks setup instead of being overwritten. The draft tab stores Brand in its existing JSON data; other supporting tabs need no Brand column.
+
+Historical exercise names are never automatically renamed or used to infer Brand. Any name unification is a separate manual operation. Rebuild the dashboard after manual history edits, then reopen the app to refresh suggestions and hints. Dashboard rebuilds normalize historical Focus capitalization, spacing, and duplicate comma-separated tags. Existing summaries missing Focus are rebuilt once when the app loads its exercise catalog.
+
+Workout submissions require explicit positive whole-number sets and reps, plus signed numeric loads; zero is valid. A single reps/load value repeats across sets; lists must match the declared set count. Drafts and templates can remain incomplete.
+
+Optional bodyweight accepts positive kg with at most two decimal places. Bodyweight stores one weigh-in per date. ExerciseSettings has Exercise and Bodyweight columns with TRUE/FALSE overrides; conflicting classifications must be resolved before merging names. Correct old positive assistance to negative loads manually before using assisted-load reporting.

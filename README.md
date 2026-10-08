@@ -6,7 +6,7 @@ A self-hosted Google Apps Script workout journal backed by your own Google Sheet
 
 Fitness Journal is my attempt to make logging my workouts easier while gathering more actionable information from those logs. **"You can't improve what you don't measure."**
 
-I used to log my workouts in my phone's Notes app and then transcribe that information into an Excel sheet. I had the raw data, but gathering it was time-consuming, and what I ended up with was mostly rows and rows of workout information that were difficult to navigate and hard to act upon.
+I used to log my workouts in my phone's Notes app and then transcribe that information into an Excel sheet. I had the raw data, but gathering it was time-consuming, and what I ended up with was mostly rows and rows of workout information that were difficult to navigate and hard to act upon
 
 I could have paid for any number of fitness apps, but I wanted to retain control of my information and be able to access it whenever I wanted.
 
@@ -33,6 +33,7 @@ If you're starting your own fitness journey and want a way to track your progres
 
 - [Setup guide](SETUP.md): deployment, permissions, mobile shortcuts, troubleshooting, and updates.
 - [Analytics guide](ANALYTICS.md): dashboard and digest contents, calculations, and limitations.
+- [Changelog](CHANGELOG.md): completed changes and upgrade notes.
 
 ## Quick installation
 
@@ -54,18 +55,27 @@ For the full walkthrough and phone shortcuts, see [SETUP.md](SETUP.md). This is 
 
 Each card has these fields:
 
+- **Focus:** Choose the muscle group first to filter recent exercise suggestions.
 - **Exercise:** The exercise name.
+- **Brand:** Optional equipment brand for this logged entry.
 - **Sets:** Number of sets.
 - **Reps:** Reps per set, or hold duration in seconds for isometrics.
 - **Load:** Weight in kilograms.
-- **Focus:** Targeted muscle group.
 - **Notes:** Additional information.
 
-Use a name containing `iso` for an isometric exercise. Exercise names are suggested from saved history, and an empty Focus field can be filled from that exercise's most common focus. Sets, reps, and load are prefilled by templates, not automatically restored from history.
+Use a name containing `iso` for an isometric exercise. Exercise suggestions use the existing dashboard summary, filtered by Focus and an adjustable 30-day recency cutoff. An empty Focus field can be filled from the exercise's historical focus associations. You can still type any known exercise in full, including older exercises, with its historical PR and 1RM hints. Sets, reps, and load are prefilled by templates, not automatically restored from history.
 
 The app shows muscle-group training gaps and live PR hints. Rep or hold records appear when your entered load meets or exceeds your saved load PR. See [PR definitions](ANALYTICS.md#personal-records) for details.
 
 Open the spreadsheet's **Dashboard** tab for charts. After manual spreadsheet edits, choose **Fitness Journal > Rebuild Dashboard**. Enable the optional weekly email using the [digest setup instructions](SETUP.md#weekly-digest-setup).
+
+## Focus, Brand, and bodyweight
+
+The app adds a Brand header in column H of StrengthWorkoutINPUT and Templates. Existing A:G columns and historical exercise names are preserved; no brand extraction or name migration runs automatically. Brand is saved in drafts and templates and does not split exercise volume, PRs, or progression. See [schema and upgrade notes](SETUP.md#brand-and-focus-upgrade).
+
+Dashboard rebuilds normalize historical Focus formatting (for example, chest, BICEPS becomes Chest,Biceps). The existing exercise summary includes all historical focus associations; no second catalog is created. Muscle Group Gaps tracks each group in a combined focus separately, while volume charts use the first-listed group.
+
+Optional bodyweight is stored in Bodyweight. Assistance uses negative loads, unassisted sets use zero, and added weight uses positive loads. ExerciseSettings stores persistent, editable bodyweight classifications. Reporting uses smoothed bodyweight plus logged load; app PRs retain raw loads. See [analytics](ANALYTICS.md) for details.
 
 ## Files
 
