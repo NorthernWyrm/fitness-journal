@@ -62,7 +62,7 @@ function clientFunction(name) {
 
 function client(records = {}) {
   const ctx = vm.createContext({ prRecordsByExercise: records, getEffectiveValues: card => card.values });
-  ['getLoadRecordClient', 'isIsometricExercise', 'updatePRHint', 'formatPRMessage'].forEach(name => {
+  ['getLoadRecordClient', 'isIsometricExercise', 'formatPRWeight', 'updatePRHint', 'formatPRMessage'].forEach(name => {
     vm.runInContext(clientFunction(name), ctx);
   });
   return ctx;
@@ -662,13 +662,13 @@ test('live hints gate reps by load and label isometric holds in seconds', () => 
     ctx.updatePRHint({ values: { reps, load }, querySelector: s => s === '.pr-hint' ? el : { value: name } });
     return el;
   }
-  assert.equal(hint('Squat', '30', '60').textContent, 'Current PR: 80kg');
+  assert.equal(hint('Squat', '30', '60').textContent, 'Current PR: 80kg (176.4 lbs)');
   assert.match(hint('squat', '', '80').textContent, /Most reps at max-ever load: 8 reps at 80kg/);
   assert.match(hint('Squat', '10', '80').textContent, /New rep PR: 10 reps/);
   assert.doesNotMatch(hint('Squat', '8', '80').textContent, /New rep PR/);
   assert.match(hint('Squat', '3', '90').textContent, /New max-load baseline: 3 reps at 90kg/);
   assert.match(hint('Iso squat', '50', '60').textContent, /Longest hold at max-ever load: 45 sec.*New hold PR: 50 sec/);
-  assert.equal(hint('Iso squat', '100', '40').textContent, 'Current PR: 60kg');
+  assert.equal(hint('Iso squat', '100', '40').textContent, 'Current PR: 60kg (132.3 lbs)');
   assert.equal(hint('Squat', '10', '').style.display, 'none');
 });
 

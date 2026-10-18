@@ -320,6 +320,11 @@
 
     // Live "would this be a PR?" check, shown under the Load field as you type —
     // before the set is even logged.
+    // Display conversion only; inputs, stored loads, and comparisons stay in kg.
+    function formatPRWeight(kg) {
+      return kg + 'kg (' + Number((kg / 0.45359237).toFixed(1)) + ' lbs)';
+    }
+
     function updatePRHint(card) {
       var hintEl = card.querySelector('.pr-hint');
       var exerciseTyped = card.querySelector('.f-exercise').value.trim();
@@ -351,10 +356,10 @@
         hintEl.textContent = '🆕 First logged weight for ' + label + ' — this sets the starting PR';
       } else if (newMax > prevMax) {
         hintEl.className = 'pr-hint pr';
-        hintEl.textContent = '🔥 That beats your PR of ' + prevMax + 'kg!';
+        hintEl.textContent = '🔥 That beats your PR of ' + formatPRWeight(prevMax) + '!';
       } else {
         hintEl.className = 'pr-hint neutral';
-        hintEl.textContent = 'Current PR: ' + prevMax + 'kg';
+        hintEl.textContent = 'Current PR: ' + formatPRWeight(prevMax);
       }
 
       // Only show reps/seconds when the entered load reaches the all-time load PR.
@@ -363,13 +368,13 @@
       var unit = iso ? ' sec' : ' reps';
       var recordLabel = iso ? 'Longest hold at max-ever load' : 'Most reps at max-ever load';
       if (prior && prior.bestReps !== null) {
-        hintEl.textContent += ' · ' + recordLabel + ': ' + prior.bestReps + unit + ' at ' + prevMax + 'kg.';
+        hintEl.textContent += ' · ' + recordLabel + ': ' + prior.bestReps + unit + ' at ' + formatPRWeight(prevMax) + '.';
       } else if (prior) {
-        hintEl.textContent += ' · No ' + (iso ? 'hold duration' : 'reps') + ' recorded at ' + prevMax + 'kg yet.';
+        hintEl.textContent += ' · No ' + (iso ? 'hold duration' : 'reps') + ' recorded at ' + formatPRWeight(prevMax) + ' yet.';
       }
       if (current.bestReps !== null) {
         if (!prior || newMax > prevMax) {
-          hintEl.textContent += ' · New max-load baseline: ' + current.bestReps + unit + ' at ' + newMax + 'kg.';
+          hintEl.textContent += ' · New max-load baseline: ' + current.bestReps + unit + ' at ' + formatPRWeight(newMax) + '.';
         } else if (prior.bestReps === null || current.bestReps > prior.bestReps) {
           hintEl.className = 'pr-hint pr';
           hintEl.textContent += ' · New ' + (iso ? 'hold' : 'rep') + ' PR: ' + current.bestReps + unit + '!';
